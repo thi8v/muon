@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+  # compiler
+  "compiler/muonc",
+  "compiler/muonc_macros",
+  "compiler/muonc_middle",
+]
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT"
+edition = "2024"
+
+[workspace.dependencies]
+muonc_macros = { path = "compiler/muonc_macros" }
+muonc_middle = { path = "compiler/muonc_middle" }
+
+# other dependencies
+clap = { version = "4.5", features = ["derive"] }
+thiserror = "2.0"
+termcolor = "1.4"

@@ -1,0 +1,37 @@
+use std::{
+    io::{self, Write},
+    process::ExitCode,
+};
+
+use muonc::CliError;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+
+fn main() -> ExitCode {
+    let res = match muonc::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            let mut out = StandardStream::stderr(ColorChoice::Auto);
+
+            out.set_color(ColorSpec::new().set_bold(true)).unwrap();
+            write!(out, "muonc: ").unwrap();
+            out.reset().unwrap();
+
+            if let CliError::ClapError(err) = e {
+                err.print().unwrap();
+            } else {
+                out.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))
+                    .unwrap();
+                write!(out, "error: ").unwrap();
+                out.reset().unwrap();
+                writeln!(out, "{e}").unwrap();
+            }
+
+            ExitCode::FAILURE
+        }
+    };
+
+    io::stderr().flush().expect("can't flush stderr");
+    io::stdout().flush().expect("can't flush stdout");
+
+    res
+}
