@@ -1,0 +1,15 @@
+[package]
+name = "muonc_errors"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+muonc_span = { workspace = true }
+muonc_utils = { workspace = true }
+
+# other dependencies
+annotate-snippets = "0.12"
+bitflags = { workspace = true }
+indexmap = { workspace = true }
+

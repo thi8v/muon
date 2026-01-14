@@ -168,19 +168,19 @@ use TargetParsingError::*;
 pub enum TargetParsingError {
     /// The target is unknown, use more specific error if possible like,
     /// UnknownArch
-    #[error("unknown target: `{target}`, type `lunc -target help` for details")]
+    #[error("unknown target: `{target}`, type `muonc --target help` for details")]
     UnknownTarget { target: String },
     /// The architecture in the target triple is unknown
     #[error(
-        "unknown architecture `{arch}` in target `{target}`, type `lunc -target help` for details"
+        "unknown architecture `{arch}` in target `{target}`, type `muonc -target help` for details"
     )]
     UnknownArch { arch: String, target: String },
     /// The system in the target triple is unknown
-    #[error("unknown system `{sys}` in target `{target}`, type `lunc -target help` for details")]
+    #[error("unknown system `{sys}` in target `{target}`, type `muonc -target help` for details")]
     UnknownSys { sys: String, target: String },
     /// The environment in the target triple is unknown
     #[error(
-        "unknown environment `{env}` in target `{target}`, type `lunc -target help` for details"
+        "unknown environment `{env}` in target `{target}`, type `muonc -target help` for details"
     )]
     UnknownEnv { env: String, target: String },
 }

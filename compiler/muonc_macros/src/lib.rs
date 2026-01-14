@@ -1,6 +1,7 @@
 //! Macros used across the Muon compiler
 
 extern crate proc_macro;
+use convert_case::ccase;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -50,7 +51,7 @@ fn parse_kv_field_attributes(
         }
     }
 
-    Ok((key_name, help, default))
+    Ok((ccase!(kebab, key_name), help, default))
 }
 
 /// Parse attributes of the form `#[kv(name = "...", short = '.')]`
@@ -121,12 +122,14 @@ fn parse_kv_struct_attribute(attrs: &[Attribute]) -> Result<(String, char), Toke
 fn extract_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(tp) = ty {
         let segs = &tp.path.segments;
-        if segs.len() == 1 && segs.first().unwrap().ident == "Option"
+        if segs.len() == 1
+            && segs.first().unwrap().ident == "Option"
             && let syn::PathArguments::AngleBracketed(ab) = &segs.first().unwrap().arguments
-                && ab.args.len() == 1
-                    && let syn::GenericArgument::Type(inner) = ab.args.first().unwrap() {
-                        return Some(inner);
-                    }
+            && ab.args.len() == 1
+            && let syn::GenericArgument::Type(inner) = ab.args.first().unwrap()
+        {
+            return Some(inner);
+        }
     }
     None
 }
@@ -135,12 +138,14 @@ fn extract_option_inner(ty: &Type) -> Option<&Type> {
 fn extract_vec_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(tp) = ty {
         let segs = &tp.path.segments;
-        if segs.len() == 1 && segs.first().unwrap().ident == "Vec"
+        if segs.len() == 1
+            && segs.first().unwrap().ident == "Vec"
             && let syn::PathArguments::AngleBracketed(ab) = &segs.first().unwrap().arguments
-                && ab.args.len() == 1
-                    && let syn::GenericArgument::Type(inner) = ab.args.first().unwrap() {
-                        return Some(inner);
-                    }
+            && ab.args.len() == 1
+            && let syn::GenericArgument::Type(inner) = ab.args.first().unwrap()
+        {
+            return Some(inner);
+        }
     }
     None
 }

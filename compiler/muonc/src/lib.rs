@@ -12,9 +12,10 @@ use std::{
 use clap::{ArgAction, Parser as ArgParser, ValueEnum};
 use muonc_middle::{
     kv::{KeyValue, KvPair},
-    session::{Session, Timings},
+    session::mk_session,
     target::TargetTriple,
 };
+use muonc_span::source::FsFileLoader;
 use thiserror::Error;
 
 mod build {
@@ -168,7 +169,7 @@ pub fn run() -> Result<(), CliError> {
 
     if args.version {
         eprintln!(
-            "lunc {version} ({commit} {date})",
+            "muonc {version} ({commit} {date})",
             version = env!("CARGO_PKG_VERSION"),
             commit = build::SHORT_COMMIT,
             date = &build::COMMIT_DATE[..10]
@@ -208,15 +209,32 @@ pub fn run() -> Result<(), CliError> {
 
     // TODO: check that pkg_name can be an identifier.
 
-    let sess = Session {
-        target: args.target.unwrap_or(host.clone()),
-        host,
-        timings: Timings::default(),
+    let sess = mk_session(
+        args.target.unwrap_or(host),
         pkg_name,
-        track_diagnostics: debug_opts.track_diagnostics,
-    };
+        debug_opts.track_diagnostics,
+        // true,
+        FsFileLoader,
+    );
 
-    dbg!(sess);
+    use muonc_errors::{ErrCode, Level};
+    use muonc_span::span;
+
+    let fid = sess.sm.register("./playground.mu");
+
+    let diag = sess
+        .dcx
+        .diag(Level::Error)
+        .with_code(ErrCode::UnknownToken)
+        .with_message("ZEBI")
+        .with_span(span(0usize, 10usize, fid), String::from("LABEL"))
+        .with_span(span(2usize, 4usize, fid), String::from("ANOTHER LABEL"));
+
+    sess.dcx.emit(diag);
+
+    dbg!(&sess);
+
+    sess.dcx.render();
 
     Ok(())
 }

@@ -2,8 +2,12 @@
 
 use std::{
     fmt,
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+use muonc_errors::{DiagCtxt, DiagCtxtFlags};
+use muonc_span::source::{FileLoader, SourceMap};
 
 use crate::target::TargetTriple;
 
@@ -20,6 +24,35 @@ pub struct Session {
     pub pkg_name: String,
     /// Do we track the location of creation of diagnostics?
     pub track_diagnostics: bool,
+    /// The source maps.
+    pub sm: Arc<SourceMap>,
+    /// The diagnostic context.
+    pub dcx: DiagCtxt,
+}
+
+/// Make a new compilation session.
+pub fn mk_session(
+    target: TargetTriple,
+    pkg_name: String,
+    track_diagnostics: bool,
+    loader: impl FileLoader + 'static,
+) -> Session {
+    let sm = Arc::new(SourceMap::new(loader));
+    let mut flags = DiagCtxtFlags::empty();
+
+    if track_diagnostics {
+        flags |= DiagCtxtFlags::TRACK_DIAGNOSTICS;
+    }
+
+    Session {
+        target,
+        host: TargetTriple::host(),
+        timings: Timings::default(),
+        pkg_name,
+        track_diagnostics,
+        sm: sm.clone(),
+        dcx: DiagCtxt::new(sm, flags),
+    }
 }
 
 /// Timings of the compiler.

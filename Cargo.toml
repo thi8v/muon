@@ -3,8 +3,11 @@ resolver = "3"
 members = [
   # compiler
   "compiler/muonc",
+  "compiler/muonc_errors",
   "compiler/muonc_macros",
   "compiler/muonc_middle",
+  "compiler/muonc_span",
+  "compiler/muonc_utils",
 ]
 
 [workspace.package]
@@ -13,10 +16,15 @@ license = "MIT"
 edition = "2024"
 
 [workspace.dependencies]
+muonc_errors = { path = "compiler/muonc_errors" }
 muonc_macros = { path = "compiler/muonc_macros" }
 muonc_middle = { path = "compiler/muonc_middle" }
+muonc_span = { path = "compiler/muonc_span" }
+muonc_utils = { path = "compiler/muonc_utils" }
 
 # other dependencies
+bitflags = "2.10"
 clap = { version = "4.5", features = ["derive"] }
+indexmap = "2.13"
 thiserror = "2.0"
 termcolor = "1.4"

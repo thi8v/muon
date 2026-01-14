@@ -5,8 +5,11 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+muonc_errors = { workspace = true }
 muonc_macros = { workspace = true }
 muonc_middle = { workspace = true }
+muonc_span = { workspace = true }
+muonc_utils = { workspace = true }
 
 # other dependencies
 clap = { workspace = true }

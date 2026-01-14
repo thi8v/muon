@@ -1,0 +1,10 @@
+[package]
+name = "muonc_span"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+# other dependencies
+boxcar = "0.2"
