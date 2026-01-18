@@ -7,7 +7,10 @@ use std::{
 };
 
 use muonc_errors::{DiagCtxt, DiagCtxtFlags};
-use muonc_span::source::{FileLoader, SourceMap};
+use muonc_span::{
+    source::{FileLoader, SourceMap},
+    symbol::Symbol,
+};
 
 use crate::target::TargetTriple;
 
@@ -21,7 +24,7 @@ pub struct Session {
     /// Timings of the compilation sessions.
     pub timings: Timings,
     /// Name of the package.
-    pub pkg_name: String,
+    pub pkg_name: Symbol,
     /// Do we track the location of creation of diagnostics?
     pub track_diagnostics: bool,
     /// The source maps.
@@ -33,7 +36,7 @@ pub struct Session {
 /// Make a new compilation session.
 pub fn mk_session(
     target: TargetTriple,
-    pkg_name: String,
+    pkg_name: Symbol,
     track_diagnostics: bool,
     loader: impl FileLoader + 'static,
 ) -> Session {

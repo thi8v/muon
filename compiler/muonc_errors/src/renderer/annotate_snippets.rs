@@ -10,11 +10,13 @@ use muonc_span::source::SourceMap;
 
 use crate::{Code, MultiSpan, renderer::Renderer};
 
+type OwnedReport<'dcx> = Vec<Group<'dcx>>;
+
 /// [annotate_snippets] backend Renderer.
 #[derive(Debug, Clone)]
 pub struct AnnotateRenderer<'dcx> {
     inner: AsRenderer,
-    reports: Vec<Group<'dcx>>,
+    reports: Vec<OwnedReport<'dcx>>,
 }
 
 impl<'dcx> AnnotateRenderer<'dcx> {
@@ -33,6 +35,7 @@ impl<'dcx> AnnotateRenderer<'dcx> {
             crate::Level::Info => annotate_snippets::Level::INFO,
             crate::Level::Note => annotate_snippets::Level::NOTE,
             crate::Level::Help => annotate_snippets::Level::HELP,
+            crate::Level::Debug => annotate_snippets::Level::INFO.with_name("DEBUG"),
         }
     }
 
@@ -42,6 +45,7 @@ impl<'dcx> AnnotateRenderer<'dcx> {
         message: &'dcx str,
         code: Option<crate::Code>,
         multispan: &'dcx MultiSpan,
+        messages: &'dcx [crate::Message],
         sm: &'dcx Arc<SourceMap>,
     ) -> Group<'dcx> {
         let title = Self::level(level).primary_title(message);
@@ -52,7 +56,7 @@ impl<'dcx> AnnotateRenderer<'dcx> {
             None => title,
         };
 
-        if let Some((span, _)) = multispan.first() {
+        let report = if let Some((span, _)) = multispan.first() {
             let fid = span.fid;
             let path = sm.get_path(fid).as_os_str().to_str().unwrap();
             let src = sm.get_src(fid);
@@ -75,30 +79,69 @@ impl<'dcx> AnnotateRenderer<'dcx> {
             ))
         } else {
             title.elements(None::<Snippet<Annotation>>)
-        }
+        };
+
+        report.elements(
+            messages
+                .iter()
+                .map(|msg| Self::level(msg.level).message(&msg.msg)),
+        )
     }
 
     fn intern(&mut self, diag: &'dcx crate::Diag, sm: &'dcx Arc<SourceMap>) {
-        let primary = self.intern_diag(diag.level, &diag.message, diag.code, &diag.span, sm);
+        let primary = self.intern_diag(
+            diag.level,
+            &diag.title,
+            diag.code,
+            &diag.span,
+            &diag.messages,
+            sm,
+        );
 
-        self.reports.push(primary);
+        let mut report = vec![primary];
 
         for subdiag in &diag.children {
-            let child = self.intern_diag(subdiag.level, &subdiag.message, None, &subdiag.span, sm);
+            let child = self.intern_diag(
+                subdiag.level,
+                &subdiag.message,
+                None,
+                &subdiag.span,
+                &[],
+                sm,
+            );
 
-            self.reports.push(child);
+            report.push(child);
         }
+
+        self.reports.push(report);
+    }
+}
+
+impl<'dcx> Default for AnnotateRenderer<'dcx> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl<'dcx> Renderer<'dcx> for AnnotateRenderer<'dcx> {
     fn init(&mut self, diags: &'dcx [crate::Diag], sm: &'dcx Arc<SourceMap>) {
         for diag in diags {
-            self.intern(diag, &sm);
+            self.intern(diag, sm);
         }
     }
 
     fn render(&mut self) -> String {
-        self.inner.render(&self.reports)
+        let mut res = String::new();
+
+        for (i, report) in self.reports.iter().enumerate() {
+            if i != 0 {
+                // print a little separation between different diagnostics
+                res.push_str("\n\n");
+            }
+
+            res.push_str(&self.inner.render(&report));
+        }
+
+        res
     }
 }

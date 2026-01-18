@@ -6,6 +6,7 @@ use std::{
 };
 
 pub mod source;
+pub mod symbol;
 
 /// Location of something in a file.
 ///

@@ -5,6 +5,9 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+muonc_macros = { workspace = true }
 
 # other dependencies
-boxcar = "0.2"
+boxcar = { workspace = true }
+bumpalo = "3.19"
+dashmap = "6.1"

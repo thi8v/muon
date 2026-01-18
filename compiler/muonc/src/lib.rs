@@ -15,7 +15,10 @@ use muonc_middle::{
     session::mk_session,
     target::TargetTriple,
 };
-use muonc_span::source::FsFileLoader;
+use muonc_span::{
+    source::FsFileLoader,
+    symbol::{Symbol, force_eval_global_interner},
+};
 use thiserror::Error;
 
 mod build {
@@ -124,6 +127,8 @@ pub enum CliError {
     ClapError(#[from] clap::Error),
     #[error("{0}")]
     InvalidKv(String),
+    #[error("the package name {0:?} cannot be an identifier.")]
+    NonIdentPkgName(String),
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -207,34 +212,22 @@ pub fn run() -> Result<(), CliError> {
             .to_string()
     });
 
-    // TODO: check that pkg_name can be an identifier.
+    force_eval_global_interner();
+
+    let pkg = Symbol::intern(&pkg_name);
+
+    if !pkg.can_identifier() {
+        return Err(CliError::NonIdentPkgName(pkg_name));
+    }
 
     let sess = mk_session(
         args.target.unwrap_or(host),
-        pkg_name,
+        pkg,
         debug_opts.track_diagnostics,
-        // true,
         FsFileLoader,
     );
 
-    use muonc_errors::{ErrCode, Level};
-    use muonc_span::span;
-
-    let fid = sess.sm.register("./playground.mu");
-
-    let diag = sess
-        .dcx
-        .diag(Level::Error)
-        .with_code(ErrCode::UnknownToken)
-        .with_message("ZEBI")
-        .with_span(span(0usize, 10usize, fid), String::from("LABEL"))
-        .with_span(span(2usize, 4usize, fid), String::from("ANOTHER LABEL"));
-
-    sess.dcx.emit(diag);
-
-    dbg!(&sess);
-
-    sess.dcx.render();
+    _ = sess;
 
     Ok(())
 }

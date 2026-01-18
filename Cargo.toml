@@ -24,6 +24,7 @@ muonc_utils = { path = "compiler/muonc_utils" }
 
 # other dependencies
 bitflags = "2.10"
+boxcar = "0.2"
 clap = { version = "4.5", features = ["derive"] }
 indexmap = "2.13"
 thiserror = "2.0"

@@ -25,6 +25,10 @@ pub enum Level {
     Info,
     Note,
     Help,
+    /// **N.B: should not be used it's only here for the emit location and some
+    /// internal things.**
+    #[doc(hidden)]
+    Debug,
 }
 
 /// List of all the errors Muon can emit.
@@ -133,6 +137,12 @@ impl MultiSpan {
     }
 }
 
+impl Default for MultiSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The code of a diagnostic.
 #[derive(Debug, Clone, Copy)]
 pub enum Code {
@@ -152,6 +162,13 @@ impl From<ErrCode> for Code {
     }
 }
 
+/// A diagnostic message.
+#[derive(Debug, Clone)]
+pub struct Message {
+    level: Level,
+    msg: String,
+}
+
 /// Trait implemented by diagnostic helper structs.
 pub trait Diagnostic {
     /// Convert to a diagnostic.
@@ -163,9 +180,10 @@ pub trait Diagnostic {
 pub struct Diag {
     pub(crate) level: Level,
     pub code: Option<Code>,
-    pub message: String,
+    pub title: String,
     pub span: MultiSpan,
     pub children: Vec<Subdiag>,
+    pub messages: Vec<Message>,
     pub emitted_at: DiagEmitLoc,
 }
 
@@ -177,8 +195,8 @@ impl Diag {
     }
 
     /// Set the diagnostic's message.
-    pub fn with_message(mut self, message: impl Display) -> Diag {
-        self.message = message.to_string();
+    pub fn with_title(mut self, message: impl Display) -> Diag {
+        self.title = message.to_string();
         self
     }
 
@@ -190,16 +208,21 @@ impl Diag {
         self
     }
 
-    /// Append an help sub-diagnostic with no span and the provided message.
-    pub fn with_help(self, message: impl Display) -> Diag {
-        self.subdiag(Subdiag {
-            level: Level::Help,
-            message: message.to_string(),
-            span: MultiSpan::new(),
-        })
+    /// Append a message to the diagnostic.
+    pub fn with_message(mut self, level: Level, message: impl Display) -> Diag {
+        self.messages.push(Message {
+            level,
+            msg: message.to_string(),
+        });
+        self
     }
 
-    /// Push a sub diagnostic to this diagnostic.
+    /// Append an help message to the diagnostic.
+    pub fn with_help(self, message: impl Display) -> Diag {
+        self.with_message(Level::Help, message)
+    }
+
+    /// Append a sub diagnostic to this diagnostic.
     pub fn subdiag(mut self, sub: impl Into<Subdiag>) -> Diag {
         self.children.push(sub.into());
         self
@@ -282,9 +305,10 @@ impl DiagCtxt {
         Diag {
             level,
             code: None,
-            message: String::new(),
+            title: String::new(),
             span: MultiSpan::new(),
             children: Vec::new(),
+            messages: Vec::new(),
             emitted_at: DiagEmitLoc::NOWHERE,
         }
     }
@@ -345,13 +369,13 @@ impl DiagCtxt {
             let diag = if this.flags.contains(DiagCtxtFlags::TRACK_DIAGNOSTICS) {
                 // TODO: make `DEBUG:` be purple.
                 let msg = format!(
-                    "DEBUG: this diagnostic was emitted in {file}, at {line}:{column}",
+                    "this diagnostic was emitted in {file}, at {line}:{column}",
                     file = diag.emitted_at.file,
                     line = diag.emitted_at.line,
                     column = diag.emitted_at.col
                 );
 
-                diag.with_help(msg)
+                diag.with_message(Level::Debug, msg)
             } else {
                 diag
             };
