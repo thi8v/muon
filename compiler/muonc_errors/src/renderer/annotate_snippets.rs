@@ -56,27 +56,28 @@ impl<'dcx> AnnotateRenderer<'dcx> {
             None => title,
         };
 
-        let report = if let Some((span, _)) = multispan.first() {
+        let report = if let Some(crate::Label { span, .. }) = multispan.first() {
             let fid = span.fid;
-            let path = sm.get_path(fid).as_os_str().to_str().unwrap();
-            let src = sm.get_src(fid);
+            let path = sm.ref_path(fid).as_os_str().to_str().unwrap();
+            let src = sm.ref_src(fid);
 
-            title.element(Snippet::source(src).path(path).annotations(
-                multispan.iter().enumerate().map(|(i, (span, label))| {
-                    debug_assert_eq!(
-                        span.fid, fid,
-                        "The file ids must be the same in this multi span"
-                    );
+            title.element(
+                Snippet::source(src)
+                    .path(path)
+                    .annotations(multispan.iter().map(|crate::Label { style, msg, span }| {
+                        debug_assert_eq!(
+                            span.fid, fid,
+                            "The file ids must be the same in this multi span"
+                        );
 
-                    let kind = if i == 0 {
-                        AnnotationKind::Primary
-                    } else {
-                        AnnotationKind::Context
-                    };
+                        let kind = match style {
+                            crate::LabelStyle::Primary => AnnotationKind::Primary,
+                            crate::LabelStyle::Secondary => AnnotationKind::Context,
+                        };
 
-                    kind.span(span.to_parts().1).label(label.as_deref())
-                }),
-            ))
+                        kind.span(span.to_parts().1).label(msg)
+                    })),
+            )
         } else {
             title.elements(None::<Snippet<Annotation>>)
         };
@@ -139,7 +140,7 @@ impl<'dcx> Renderer<'dcx> for AnnotateRenderer<'dcx> {
                 res.push_str("\n\n");
             }
 
-            res.push_str(&self.inner.render(&report));
+            res.push_str(&self.inner.render(report));
         }
 
         res

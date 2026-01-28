@@ -529,9 +529,11 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "muonc_errors",
+ "muonc_lexer",
  "muonc_macros",
  "muonc_middle",
  "muonc_span",
+ "muonc_token",
  "muonc_utils",
  "shadow-rs",
  "termcolor",
@@ -547,6 +549,16 @@ dependencies = [
  "indexmap",
  "muonc_span",
  "muonc_utils",
+]
+
+[[package]]
+name = "muonc_lexer"
+version = "0.1.0"
+dependencies = [
+ "muonc_errors",
+ "muonc_middle",
+ "muonc_span",
+ "muonc_token",
 ]
 
 [[package]]
@@ -568,6 +580,7 @@ dependencies = [
  "muonc_errors",
  "muonc_macros",
  "muonc_span",
+ "muonc_utils",
  "thiserror",
 ]
 
@@ -579,6 +592,13 @@ dependencies = [
  "bumpalo",
  "dashmap",
  "muonc_macros",
+]
+
+[[package]]
+name = "muonc_token"
+version = "0.1.0"
+dependencies = [
+ "muonc_span",
 ]
 
 [[package]]

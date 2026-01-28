@@ -1,16 +1,13 @@
 [package]
-name = "muonc_middle"
+name = "muonc_lexer"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
 muonc_errors = { workspace = true }
-muonc_macros = { workspace = true }
 muonc_span = { workspace = true }
-muonc_utils = { workspace = true }
+muonc_middle = { workspace = true }
+muonc_token = { workspace = true }
 
 # other dependencies
-clap = { workspace = true }
-humantime = "2.3"
-thiserror = { workspace = true }

@@ -4,6 +4,7 @@ use std::{
     fmt::Debug,
     fs, io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use crate::FileId;
@@ -12,7 +13,7 @@ use crate::FileId;
 #[derive(Debug, Clone)]
 pub struct SourceFile {
     pub path: PathBuf,
-    pub src: String,
+    pub src: Arc<String>,
     pub fid: FileId,
 }
 
@@ -63,7 +64,7 @@ impl SourceMap {
     pub fn try_register(&self, path: impl AsRef<Path>) -> io::Result<FileId> {
         let path = path.as_ref();
 
-        let src = self.loader.read_file(path)?;
+        let src = Arc::new(self.loader.read_file(path)?);
 
         let idx = self.files.push_with(|idx| SourceFile {
             path: path.to_path_buf(),
@@ -81,21 +82,30 @@ impl SourceMap {
             .expect("failed to register a file in the source map")
     }
 
-    /// Get the path of the given file.
-    pub fn get_path(&self, fid: FileId) -> &Path {
-        &self
-            .files
+    /// Get the source file at the given fid.
+    pub fn file_of(&self, fid: FileId) -> &SourceFile {
+        self.files
             .get(fid.as_usize())
             .expect("unknown file in source map")
-            .path
     }
 
-    /// Get the source of the given file.
-    pub fn get_src(&self, fid: FileId) -> &str {
-        &self
-            .files
-            .get(fid.as_usize())
-            .expect("unknown file in source map")
-            .src
+    /// Get the path of the given file.
+    pub fn ref_path(&self, fid: FileId) -> &Path {
+        &self.file_of(fid).path
+    }
+
+    /// Get a reference to the source of the given file.
+    pub fn ref_src(&self, fid: FileId) -> &str {
+        &self.file_of(fid).src
+    }
+
+    /// Get a shared reference of the source of the given file.
+    pub fn source_of(&self, fid: FileId) -> Arc<String> {
+        self.file_of(fid).src.clone()
+    }
+
+    /// Returns true if the fid exists in the source map.
+    pub fn exists(&self, fid: FileId) -> bool {
+        self.files.get(fid.as_usize()).is_some()
     }
 }

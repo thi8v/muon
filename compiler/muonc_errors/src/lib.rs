@@ -3,6 +3,7 @@
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display, Write},
+    ops::Deref,
     panic::Location,
     path::{Component, Path, PathBuf},
     sync::{Arc, RwLock},
@@ -10,11 +11,12 @@ use std::{
 
 use bitflags::bitflags;
 use indexmap::IndexSet;
-use muonc_span::{Span, source::SourceMap};
+use muonc_span::{Span, source::SourceMap, symbol::Symbol};
 use muonc_utils::pluralize;
 
 use crate::renderer::Renderer;
 
+pub mod prelude;
 pub mod renderer;
 
 /// Severity level of a diagnostic.
@@ -38,6 +40,30 @@ pub enum ErrCode {
     ///
     /// N.B: indetifier do not support unicode for now.
     UnknownToken = 1,
+    /// Unterminated block comment.
+    UnterminatedBlockComment = 2,
+    /// unknown escape sequence
+    UnknownCharacterEscape = 3,
+    /// too many code points in a character literal
+    TooManyCodepointsInCharLiteral = 4,
+    /// empty character literal
+    EmptyCharLiteral = 5,
+    /// reached the end of file too early.
+    ReachedEof = 6,
+    /// not enough hex digits in hexadecimal escape sequence
+    NotEnoughHexDigits = 7,
+    /// unterminated string literal
+    UnterminatedStringLiteral = 8,
+    /// invalid digit in number
+    InvalidDigitNumber = 9,
+    /// too large integer literal.
+    TooLargeIntegerLiteral = 10,
+    /// invalid unicode escape sequence
+    InvalidUnicodeEscape = 11,
+    /// expected exponent part
+    ExpectedExponentPart = 12,
+    /// no digits in a non decimal
+    NoDigitsInANonDecimal = 13,
 }
 
 impl Display for ErrCode {
@@ -67,6 +93,14 @@ pub struct DiagEmitLoc {
 impl DiagEmitLoc {
     const NOWHERE: DiagEmitLoc = DiagEmitLoc {
         file: Cow::Borrowed("<!NOWHERE!>"),
+        line: u32::MAX,
+        col: u32::MAX,
+    };
+
+    // marker to tell the dcx to never add the debug thing to a diagnostic, used by the summary diagnostic.
+    #[doc(hidden)]
+    pub const __NEVER_DEBUG_INFO: DiagEmitLoc = DiagEmitLoc {
+        file: Cow::Borrowed("<!NEVER_DEBUG_INFO!>"),
         line: u32::MAX,
         col: u32::MAX,
     };
@@ -112,7 +146,7 @@ impl From<&'static Location<'static>> for DiagEmitLoc {
 /// A collection of `Span` with an optional message with them.
 #[derive(Debug, Clone)]
 pub struct MultiSpan {
-    pub spans: Vec<(Span, Option<String>)>,
+    pub spans: Vec<Label>,
 }
 
 impl MultiSpan {
@@ -122,7 +156,7 @@ impl MultiSpan {
     }
 
     /// Returns the first span.
-    pub fn first(&self) -> Option<&(Span, Option<String>)> {
+    pub fn first(&self) -> Option<&Label> {
         self.spans.first()
     }
 
@@ -132,7 +166,7 @@ impl MultiSpan {
     }
 
     /// Gets an iterator of the spans.
-    pub fn iter(&self) -> impl Iterator<Item = &(Span, Option<String>)> {
+    pub fn iter(&self) -> impl Iterator<Item = &Label> {
         self.spans.iter()
     }
 }
@@ -169,6 +203,47 @@ pub struct Message {
     msg: String,
 }
 
+/// The style of the label.
+#[derive(Debug, Clone)]
+pub enum LabelStyle {
+    Primary,
+    Secondary,
+}
+
+/// A label describing a region of code in a diagnostic.
+#[derive(Debug, Clone)]
+pub struct Label {
+    pub style: LabelStyle,
+    pub msg: String,
+    pub span: Span,
+}
+
+impl Label {
+    /// Create a primary label
+    pub fn primary(span: Span) -> Label {
+        Label {
+            style: LabelStyle::Primary,
+            msg: String::new(),
+            span,
+        }
+    }
+
+    /// Create a secondary label
+    pub fn secondary(span: Span) -> Label {
+        Label {
+            style: LabelStyle::Secondary,
+            msg: String::new(),
+            span,
+        }
+    }
+
+    /// Attach a message to a label
+    pub fn with_message(mut self, msg: impl ToString) -> Label {
+        self.msg = msg.to_string();
+        self
+    }
+}
+
 /// Trait implemented by diagnostic helper structs.
 pub trait Diagnostic {
     /// Convert to a diagnostic.
@@ -200,11 +275,11 @@ impl Diag {
         self
     }
 
-    /// Push a span in the multispan of this diagnostic.
+    /// Push a label in the multispan of this diagnostic.
     ///
     /// N.B: each span must have the same `FileId`.
-    pub fn with_span(mut self, span: Span, label: impl Into<Option<String>>) -> Diag {
-        self.span.spans.push((span, label.into()));
+    pub fn with_label(mut self, label: Label) -> Diag {
+        self.span.spans.push(label);
         self
     }
 
@@ -220,6 +295,11 @@ impl Diag {
     /// Append an help message to the diagnostic.
     pub fn with_help(self, message: impl Display) -> Diag {
         self.with_message(Level::Help, message)
+    }
+
+    /// Append an note message to the diagnostic.
+    pub fn with_note(self, message: impl Display) -> Diag {
+        self.with_message(Level::Note, message)
     }
 
     /// Append a sub diagnostic to this diagnostic.
@@ -275,8 +355,34 @@ pub struct DiagCtxtInner {
 }
 
 /// Diagnostic was guaranteed to be reported to the user.
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Eq)]
+// NB. there is a private ZST field so that you can construct DiagGuaranteed only in this crate.
 pub struct DiagGuaranteed(pub(crate) ());
+
+impl DiagGuaranteed {
+    /// Cannot recover from the error.
+    pub fn cant_rec<T>(self) -> ReResult<T> {
+        Err(Recovered::No(self))
+    }
+
+    /// Recover from the error with the default value of `T`.
+    pub fn recover<T: Default>(self) -> ReResult<T> {
+        self.recover_with(<T as Default>::default())
+    }
+
+    /// Recovered from the error.
+    ///
+    /// # Note
+    ///
+    /// If you want to recover with the `Default::default()` value use `rec`.
+    pub fn recover_with<T>(self, val: T) -> ReResult<T> {
+        Err(Recovered::Yes(val, self))
+    }
+
+    /// Discards the guarantee.
+    #[inline]
+    pub fn discard(self) {}
+}
 
 /// Diagnostic context.
 #[derive(Clone)]
@@ -320,8 +426,9 @@ impl DiagCtxt {
             .expect("failed to access the diagnostic context")
     }
 
+    /// Returns the summary message.
     #[inline]
-    pub fn summary(&self, pkg_name: &str) -> Option<String> {
+    pub fn summary(&self, pkg_name: Symbol) -> Option<String> {
         self.with_inner(|this| {
             if this.errors > 0 {
                 Some(format!(
@@ -350,6 +457,7 @@ impl DiagCtxt {
     #[track_caller]
     pub fn emit(&self, diag: impl Diagnostic) -> DiagGuaranteed {
         let mut diag = diag.into_diag(self);
+        let caller_loc = Location::caller();
 
         self.with_inner_mut(|this| {
             match diag.level {
@@ -358,15 +466,17 @@ impl DiagCtxt {
                 _ => this.other += 1,
             }
 
-            if diag.emitted_at == DiagEmitLoc::NOWHERE {
-                diag.emitted_at = DiagEmitLoc::from(Location::caller());
+            let can_debug_diag = diag.emitted_at != DiagEmitLoc::__NEVER_DEBUG_INFO;
+
+            if diag.emitted_at == DiagEmitLoc::NOWHERE && can_debug_diag {
+                diag.emitted_at = DiagEmitLoc::from(caller_loc);
             }
 
             if let Some(Code::Err(errcode)) = diag.code {
                 this.emitted_err_code.insert(errcode);
             }
 
-            let diag = if this.flags.contains(DiagCtxtFlags::TRACK_DIAGNOSTICS) {
+            let diag = if this.flags.contains(DiagCtxtFlags::TRACK_DIAGNOSTICS) && can_debug_diag {
                 // TODO: make `DEBUG:` be purple.
                 let msg = format!(
                     "this diagnostic was emitted in {file}, at {line}:{column}",
@@ -397,6 +507,29 @@ impl DiagCtxt {
         let mut renderer = crate::renderer::annotate_snippets::AnnotateRenderer::new();
         renderer.init(&inner.diags, &inner.sm);
         eprintln!("{}", renderer.render());
+    }
+
+    /// Returns the 5 first error code that have been emited and `true` if there is more than 5.
+    pub fn err_codes(&self) -> (Vec<ErrCode>, bool) {
+        self.with_inner(|this| {
+            let codes = this.emitted_err_code.iter().take(5).copied().collect();
+            let more = this.emitted_err_code.len() > 5;
+
+            (codes, more)
+        })
+        .expect("unable to lock the diagnostic context")
+    }
+
+    /// Returns `true` if we emitted at least one diagnostic
+    pub fn is_empty(&self) -> bool {
+        self.with_inner(|this| this.diags.is_empty())
+            .expect("unable to lock the diagnostic context")
+    }
+
+    /// Returns `Some(guarantee)` if we emitted a diagnostic, `None` otherwise.
+    #[inline]
+    pub fn has_emitted(&self) -> Option<DiagGuaranteed> {
+        (!self.is_empty()).then_some(DiagGuaranteed(()))
     }
 
     /// Access the inner diagnostic context.
@@ -441,4 +574,86 @@ impl fmt::Debug for DiagCtxt {
                 .finish_non_exhaustive(),
         }
     }
+}
+
+/// The recoverability of an error, with a guarantee that the diagnostic was
+/// emited.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Recovered<T> {
+    /// The error is recoverable and returned a result
+    Yes(T, DiagGuaranteed),
+    /// The error is irrecoverable.
+    No(DiagGuaranteed),
+}
+
+/// A result that may have recovered from its failure.
+pub type ReResult<T> = Result<T, Recovered<T>>;
+
+mod private {
+    pub trait Sealed {}
+
+    impl<T> Sealed for super::ReResult<T> {}
+}
+
+/// Extension to the `ReResult<T>` type.
+pub trait ReResultExtension<T>: private::Sealed {
+    /// Maps a `ReResult<T>` to a `ReResult<U>`, both the `Ok(_)` and the
+    /// `Err(Recovered::Yes(val, _))`.
+    fn re_map<U>(self, f: impl FnOnce(T) -> U) -> ReResult<U>;
+
+    /// Turns `&ReResult<T>` into `ReResult<&T>`.
+    fn re_ref(&self) -> ReResult<&T>;
+
+    /// Turns `&ReResult<T>` into `ReResult<&<T as Deref>::Target>`
+    fn re_deref(&self) -> ReResult<&<T as Deref>::Target>
+    where
+        T: Deref;
+}
+
+impl<T> ReResultExtension<T> for ReResult<T> {
+    fn re_map<U>(self, f: impl FnOnce(T) -> U) -> ReResult<U> {
+        match self {
+            Ok(val) => Ok(f(val)),
+            Err(Recovered::Yes(val, guarantee)) => Err(Recovered::Yes(f(val), guarantee)),
+            Err(Recovered::No(guarantee)) => Err(Recovered::No(guarantee)),
+        }
+    }
+
+    fn re_ref(&self) -> ReResult<&T> {
+        // NB. we don't use the guarantee of the previous one because it's
+        // behind a reference and DiagGuranteed doesn't implement Copy or Clone.
+        match self {
+            Ok(val) => Ok(val),
+            Err(Recovered::Yes(val, _)) => Err(Recovered::Yes(val, DiagGuaranteed(()))),
+            Err(Recovered::No(_)) => Err(Recovered::No(DiagGuaranteed(()))),
+        }
+    }
+
+    fn re_deref(&self) -> ReResult<&<T as Deref>::Target>
+    where
+        T: Deref,
+    {
+        self.re_ref().re_map(Deref::deref)
+    }
+}
+
+/// Like `?` but only for `ReResult<T>`, and returns the value even if its
+/// `Err(Recovered::Yes(..))`, and propagates to a function with a `ReResult<U>`
+/// return type.
+#[macro_export]
+macro_rules! tri {
+    ($res:expr) => {
+        match $res {
+            Ok(val) => val,
+            Err($crate::Recovered::Yes(val, _)) => val,
+            Err($crate::Recovered::No(guarantee)) => return Err($crate::Recovered::No(guarantee)),
+        }
+    };
+    ($res:expr, default: $default:expr) => {
+        match $res {
+            Ok(val) => val,
+            Err($crate::Recovered::Yes(val, _)) => val,
+            Err($crate::Recovered::No(guarantee)) => $default,
+        }
+    };
 }

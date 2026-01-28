@@ -1,0 +1,10 @@
+[package]
+name = "muonc_token"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+muonc_span = { workspace = true }
+
+# other dependencies

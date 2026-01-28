@@ -4,9 +4,11 @@ members = [
   # compiler
   "compiler/muonc",
   "compiler/muonc_errors",
+  "compiler/muonc_lexer",
   "compiler/muonc_macros",
   "compiler/muonc_middle",
   "compiler/muonc_span",
+  "compiler/muonc_token",
   "compiler/muonc_utils",
 ]
 
@@ -17,9 +19,11 @@ edition = "2024"
 
 [workspace.dependencies]
 muonc_errors = { path = "compiler/muonc_errors" }
+muonc_lexer = { path = "compiler/muonc_lexer" }
 muonc_macros = { path = "compiler/muonc_macros" }
 muonc_middle = { path = "compiler/muonc_middle" }
 muonc_span = { path = "compiler/muonc_span" }
+muonc_token = { path = "compiler/muonc_token" }
 muonc_utils = { path = "compiler/muonc_utils" }
 
 # other dependencies

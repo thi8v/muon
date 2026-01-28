@@ -2,6 +2,7 @@
 
 use std::{
     fmt, mem,
+    ops::RangeInclusive,
     sync::{
         LazyLock, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -37,6 +38,12 @@ impl Symbol {
         GLOBAL_INTERNER.get_str(*self)
     }
 
+    /// The lenght of the interned string.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.as_str().len()
+    }
+
     /// Is this symbol predefined?
     #[inline]
     pub fn is_predefined(&self) -> bool {
@@ -50,8 +57,14 @@ impl Symbol {
 
     /// Get the internal id of the given symbol.
     #[inline]
-    pub fn id(&self) -> u32 {
+    pub const fn id(&self) -> u32 {
         self.0
+    }
+
+    /// Get the internal id of the given symbol as a usize.
+    #[inline]
+    pub const fn as_usize(&self) -> usize {
+        self.0 as usize
     }
 
     /// Can this symbol be used as an identifier?
@@ -68,6 +81,12 @@ impl Symbol {
 impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "sym{:?}", self.as_str())
+    }
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -173,6 +192,25 @@ impl Interner {
     pub fn get_str(&self, sym: Symbol) -> &str {
         self.data[sym.0 as usize]
     }
+
+    /// Get an owned slice of a range of symbols.
+    ///
+    /// N.B: due to how this is implemented it may be **SUPER SLOW** here are
+    /// some recommandations using this method:
+    /// * If the range exists before creating before we start creating symbols, then
+    ///   use this method as early as possible.
+    /// * Try to memoize the results, you **DO NOT WANT** to run this function
+    ///   super often, the less the better.
+    #[must_use = "this methods could be super slow so running it without using it's result is just dumb"]
+    pub fn get_str_slice(&self, range: RangeInclusive<Symbol>) -> Vec<&str> {
+        fn inner(this: &Interner, range: RangeInclusive<u32>) -> impl Iterator<Item = &str> {
+            this.data
+                .iter()
+                .filter_map(move |(idx, val)| range.contains(&(idx as u32)).then_some(*val))
+        }
+
+        inner(self, (range.start().id())..=(range.end().id())).collect()
+    }
 }
 
 symbols! {
@@ -181,29 +219,34 @@ symbols! {
 
     // keywords.
     keyword: [
-        As,
-        Break,
-        Comptime,
-        Continue,
-        Else,
-        Extern,
-        False,
-        For,
-        Fun,
-        If,
-        Impl,
-        In,
-        Let,
-        Loop,
-        Mut,
-        Null,
-        Pub,
-        Return,
+        As = "as",
+        Break = "break",
+        Comptime = "comptime",
+        Continue = "continue",
+        Else = "else",
+        Extern = "extern",
+        False = "false",
+        For = "for",
+        Fun = "fun",
+        If = "if",
+        Impl = "impl",
+        In = "in",
+        Let = "let",
+        Loop = "loop",
+        Mut = "mut",
+        Null = "null",
+        Pub = "pub",
+        Return = "return",
         Self_ = "self",
-        Then,
-        Trait,
-        True,
-        While,
+        Trait = "trait",
+        True = "true",
+        While = "while",
+    ],
+
+    // weak keywords
+    weak_kw: [
+        Import = "import",
+        Mod = "mod",
     ],
 
     // primitive types.
@@ -230,4 +273,20 @@ symbols! {
         never,
         void,
     ],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifiers_checks_test() {
+        assert!(Symbol::intern("peekaboo").can_identifier());
+        assert!(Symbol::intern("foo_bar").can_identifier());
+        assert!(Symbol::intern("_").can_identifier());
+        assert!(Symbol::intern("_x_x_").can_identifier());
+        assert!(!sym::As.can_identifier());
+        assert!(!sym::Self_.can_identifier());
+        assert!(!Symbol::intern("Hello, World!").can_identifier());
+    }
 }

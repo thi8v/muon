@@ -1,7 +1,7 @@
 //! Source position and related helper functions in the Muon Compiler.
 
 use std::{
-    fmt::Display,
+    fmt::{self, Display},
     ops::{BitOr, Range},
 };
 
@@ -50,6 +50,11 @@ impl Span {
     pub fn to_parts(self) -> (FileId, Range<usize>) {
         (self.fid, self.lo..self.hi)
     }
+
+    /// Take a slice of the string with the provided span.
+    pub fn slice_str<'str>(&self, s: &'str str) -> &'str str {
+        &s[Range::from(*self)]
+    }
 }
 
 impl BitOr for Span {
@@ -70,11 +75,18 @@ impl BitOr for Span {
     }
 }
 
+/// Create a span with the given bounds and file id.
 #[inline(always)]
-pub fn span(lo: impl Into<usize>, hi: impl Into<usize>, fid: FileId) -> Span {
+pub fn span<N2, N1>(lo: N1, hi: N2, fid: FileId) -> Span
+where
+    N1: TryInto<usize>,
+    N2: TryInto<usize>,
+    N2::Error: fmt::Debug,
+    N1::Error: fmt::Debug,
+{
     Span {
-        lo: lo.into(),
-        hi: hi.into(),
+        lo: lo.try_into().unwrap(),
+        hi: hi.try_into().unwrap(),
         fid,
     }
 }
