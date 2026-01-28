@@ -17,6 +17,7 @@ muonc_utils = { workspace = true }
 clap = { workspace = true }
 shadow-rs = "1.4"
 termcolor = { workspace = true }
+termimad = "0.34"
 thiserror = { workspace = true }
 
 [build-dependencies]

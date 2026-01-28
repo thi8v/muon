@@ -2,6 +2,7 @@
 
 use proc_macro::TokenStream;
 
+mod codes_enum;
 mod kv_derive;
 mod symbols;
 
@@ -17,4 +18,9 @@ pub fn keyvalue_derive(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn symbols(input: TokenStream) -> TokenStream {
     symbols::symbols(input)
+}
+
+#[proc_macro]
+pub fn codes_enum(input: TokenStream) -> TokenStream {
+    codes_enum::codes_enum(input)
 }

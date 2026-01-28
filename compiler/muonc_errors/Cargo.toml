@@ -5,6 +5,7 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+muonc_macros = { workspace = true }
 muonc_span = { workspace = true }
 muonc_utils = { workspace = true }
 

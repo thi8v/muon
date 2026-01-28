@@ -3,14 +3,17 @@
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display, Write},
+    mem,
     ops::Deref,
     panic::Location,
     path::{Component, Path, PathBuf},
+    str::FromStr,
     sync::{Arc, RwLock},
 };
 
 use bitflags::bitflags;
 use indexmap::IndexSet;
+use muonc_macros::codes_enum;
 use muonc_span::{Span, source::SourceMap, symbol::Symbol};
 use muonc_utils::pluralize;
 
@@ -33,52 +36,32 @@ pub enum Level {
     Debug,
 }
 
-/// List of all the errors Muon can emit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ErrCode {
-    /// Unknown start of token
-    ///
-    /// N.B: indetifier do not support unicode for now.
-    UnknownToken = 1,
-    /// Unterminated block comment.
-    UnterminatedBlockComment = 2,
-    /// unknown escape sequence
-    UnknownCharacterEscape = 3,
-    /// too many code points in a character literal
-    TooManyCodepointsInCharLiteral = 4,
-    /// empty character literal
-    EmptyCharLiteral = 5,
-    /// reached the end of file too early.
-    ReachedEof = 6,
-    /// not enough hex digits in hexadecimal escape sequence
-    NotEnoughHexDigits = 7,
-    /// unterminated string literal
-    UnterminatedStringLiteral = 8,
-    /// invalid digit in number
-    InvalidDigitNumber = 9,
-    /// too large integer literal.
-    TooLargeIntegerLiteral = 10,
-    /// invalid unicode escape sequence
-    InvalidUnicodeEscape = 11,
-    /// expected exponent part
-    ExpectedExponentPart = 12,
-    /// no digits in a non decimal
-    NoDigitsInANonDecimal = 13,
-}
-
-impl Display for ErrCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "E{:04}", *self as usize)
+codes_enum! {
+    /// List of all the errors Muon can emit.
+    pub enum ErrCode: 'E' {
+        UnknownToken = 1,
+        UnterminatedBlockComment = 2,
+        UnknownCharacterEscape = 3,
+        TooManyCodepointsInCharLiteral = 4,
+        EmptyCharLiteral = 5,
+        ReachedEof = 6,
+        NotEnoughHexDigits = 7,
+        UnterminatedStringLiteral = 8,
+        InvalidDigitNumber = 9,
+        TooLargeIntegerLiteral = 10,
+        InvalidUnicodeEscape = 11,
+        ExpectedExponentPart = 12,
+        NoDigitsInANonDecimal = 13,
     }
 }
 
-/// List of all the warnings Muon can emit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WarnCode {}
-
-impl Display for WarnCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "W{:04}", *self as usize)
+codes_enum! {
+    /// List of all the warnings Muon can emit.
+    pub enum WarnCode: 'W' {
+        // NOTE: placeholders are here temporarly because WarnCode should have
+        // the size of a u8
+        __PlaceHolder1 = 1,
+        __PlaceHolder2 = 2,
     }
 }
 
@@ -184,6 +167,16 @@ pub enum Code {
     Warn(WarnCode),
 }
 
+impl Code {
+    /// Get the docs related to the diagnostic code.
+    pub fn get_docs(&self) -> &'static str {
+        match *self {
+            Code::Err(errcode) => ErrCode::documentations()[errcode as usize - 1],
+            Code::Warn(warncode) => WarnCode::documentations()[warncode as usize - 1],
+        }
+    }
+}
+
 impl From<WarnCode> for Code {
     fn from(v: WarnCode) -> Self {
         Self::Warn(v)
@@ -193,6 +186,51 @@ impl From<WarnCode> for Code {
 impl From<ErrCode> for Code {
     fn from(v: ErrCode) -> Self {
         Self::Err(v)
+    }
+}
+
+impl FromStr for Code {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, &'static str> {
+        let mut chars = s.chars();
+
+        let kind = chars.next().ok_or("empty string")?.to_ascii_uppercase();
+
+        let digits: String = chars.collect();
+        if digits.is_empty() {
+            return Err("missing numeric code");
+        }
+
+        if !digits.chars().all(|c| c.is_ascii_digit()) {
+            return Err("invalid numeric code");
+        }
+
+        let code: u32 = digits.parse().map_err(|_| "numeric code overflow")?;
+
+        match kind {
+            'E' => {
+                if code <= 0 || code as usize > ErrCode::VARIANT_COUNT {
+                    return Err("invalid error code");
+                }
+
+                // SAFETY: we checked before.
+                let code: ErrCode = unsafe { mem::transmute::<u8, ErrCode>(code as u8) };
+
+                Ok(Code::Err(code))
+            }
+            'W' => {
+                if code <= 0 || code as usize > WarnCode::VARIANT_COUNT {
+                    return Err("invalid warning code");
+                }
+
+                // SAFETY: we checked before.
+                let code: WarnCode = unsafe { mem::transmute::<u8, WarnCode>(code as u8) };
+
+                Ok(Code::Warn(code))
+            }
+            _ => Err("unknown kind of diagnostic code"),
+        }
     }
 }
 

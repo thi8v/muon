@@ -24,6 +24,7 @@ use muonc_span::{
     source::FsFileLoader,
     symbol::{Symbol, force_eval_global_interner},
 };
+use termimad::MadSkin;
 use thiserror::Error;
 
 mod build {
@@ -74,6 +75,10 @@ pub struct MuonCli {
     #[arg(long)]
     pkg_name: Option<String>,
 
+    /// Explain an error code like `E0001` or a warning like `W0001`.
+    #[arg(long)]
+    explain: Option<muonc_errors::Code>,
+
     /// Print version info and exit
     #[arg(short = 'V', long, action = ArgAction::SetTrue)]
     version: bool,
@@ -111,7 +116,10 @@ pub struct DebugOptions {
 * parser
 ...")]
     pub halt: Option<CompStage>,
-    #[kv(help = "Print the timings in a summary, of all stages of the compiler. [default: false]")]
+    #[kv(
+        help = "Print the timings in a summary, of all stages of the compiler.",
+        default = "false"
+    )]
     pub timings: bool,
     #[kv(help = "Prints to the standard error, one or more of:
 * inputfile
@@ -148,6 +156,13 @@ pub enum CliError {
 /// Exit code used by muonc to tell that the build failed.
 pub fn exit_code_build_fail() -> ExitCode {
     ExitCode::from(0x69)
+}
+
+pub fn explain(code: muonc_errors::Code) {
+    let docs = code.get_docs();
+    let skin = MadSkin::default();
+
+    skin.print_text(docs);
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -216,6 +231,11 @@ pub fn run() -> Result<(), CliError> {
     if args.debug.iter().any(|f| matches!(f, KvPair::Help)) {
         DebugOptions::print_kv_help();
 
+        return Ok(());
+    }
+
+    if let Some(code2explain) = args.explain {
+        explain(code2explain);
         return Ok(());
     }
 
