@@ -483,15 +483,12 @@ impl<'source> Lexer<'source> {
     pub fn lex_number(&mut self) -> ReResult<Lit> {
         let mut number = tri!(self.lex_number_internal(), default: Lit::int(0));
 
-        match self.current() {
-            Some('\'') => {
-                self.eat(); // eat '
+        if let Some('\'') = self.current() {
+            self.eat(); // eat '
 
-                let tag = self.eat_symbol();
+            let tag = self.eat_symbol();
 
-                number.tag = Some(tag);
-            }
-            _ => {}
+            number.tag = Some(tag);
         }
 
         Ok(number)
@@ -536,7 +533,7 @@ impl<'source> Lexer<'source> {
                 self.eat(); // eat 0
                 self.eat(); // eat X / x
                 let int_str = self.eat_word();
-                let int_part = tri!(self.parse_u128(&int_str, 16), default: 0);
+                let int_part = tri!(self.parse_u128(int_str, 16), default: 0);
 
                 match self.current() {
                     Some('.') => {
@@ -544,7 +541,7 @@ impl<'source> Lexer<'source> {
 
                         let frac_str = self.eat_word();
                         let (frac_part, frac_divisor) =
-                            match self.parse_u128_with_digit_count(&frac_str, 16) {
+                            match self.parse_u128_with_digit_count(frac_str, 16) {
                                 Ok((f, n)) => (f, n as i32),
                                 Err(_) => (0, 0),
                             };
@@ -581,7 +578,7 @@ impl<'source> Lexer<'source> {
 
                                 let exp_str = self.eat_word();
 
-                                let exp = match self.parse_u128(&exp_str, 10) {
+                                let exp = match self.parse_u128(exp_str, 10) {
                                     Ok(e) => e as i32,
                                     Err(_) => 0,
                                 };
@@ -649,7 +646,7 @@ impl<'source> Lexer<'source> {
                         let exp_str = self.eat_word();
 
                         let exp_value = sign
-                            * match self.parse_u128(&exp_str, 10) {
+                            * match self.parse_u128(exp_str, 10) {
                                 Ok(e) => e as i32,
                                 Err(_) => 0,
                             };
@@ -679,7 +676,7 @@ impl<'source> Lexer<'source> {
             });
         }
 
-        let int_part = tri!(self.parse_u128(&int_str, radix), default: 0);
+        let int_part = tri!(self.parse_u128(int_str, radix), default: 0);
 
         match self.current() {
             Some('.') if radix == 10 => {
@@ -695,11 +692,11 @@ impl<'source> Lexer<'source> {
                 self.eat(); // eat .
 
                 let frac_str = self.eat_word();
-                let (frac_part, frac_divisor) =
-                    match self.parse_u128_with_digit_count(&frac_str, 10) {
-                        Ok((f, n)) => (f, n as i32),
-                        Err(_) => (0, 0),
-                    };
+                let (frac_part, frac_divisor) = match self.parse_u128_with_digit_count(frac_str, 10)
+                {
+                    Ok((f, n)) => (f, n as i32),
+                    Err(_) => (0, 0),
+                };
 
                 let exp_value = match self.current() {
                     Some('e' | 'E') => {
@@ -734,7 +731,7 @@ impl<'source> Lexer<'source> {
 
                         let exp_str = self.eat_word();
 
-                        let exp = tri!(self.parse_u128(&exp_str, 10), default: 0) as i32;
+                        let exp = tri!(self.parse_u128(exp_str, 10), default: 0) as i32;
 
                         sign * exp
                     }
@@ -1053,10 +1050,10 @@ impl<'source> Lexer<'source> {
     ///
     /// # Errors
     ///
-    /// Returns a [`Diagnostic`] if an invalid character is encountered or the
-    /// value overflows.
+    /// Returns a [`Diag`] if an invalid character is encountered or the value
+    /// overflows.
     ///
-    /// [`Diagnostic`]: lunc_diag::Diagnostic
+    /// [`Diag`]: muonc_errors::Diag
     pub fn parse_u128_advanced(
         &mut self,
         input: &str,
@@ -1167,9 +1164,9 @@ impl<'source> Lexer<'source> {
     ///
     /// # Errors
     ///
-    /// Returns a [`Diagnostic`] if the input is invalid or too large.
+    /// Returns a [`Diag`] if the input is invalid or too large.
     ///
-    /// [`Diagnostic`]: lunc_diag::Diagnostic
+    /// [`Diag`]: muonc_errors::Diag
     pub fn parse_u128(&mut self, input: &str, radix: u8) -> ReResult<u128> {
         self.parse_u128_with_digit_count(input, radix)
             .re_map(|(int, _)| int)
@@ -1190,9 +1187,9 @@ impl<'source> Lexer<'source> {
     ///
     /// # Errors
     ///
-    /// Returns a [`Diagnostic`] on overflow or invalid input.
+    /// Returns a [`Diag`] on overflow or invalid input.
     ///
-    /// [`Diagnostic`]: lunc_diag::Diagnostic
+    /// [`Diag`]: muonc_errors::Diag
     pub fn parse_u128_with_options(
         &mut self,
         input: &str,
@@ -1222,9 +1219,9 @@ impl<'source> Lexer<'source> {
     ///
     /// # Errors
     ///
-    /// Returns a [`Diagnostic`] if the input is invalid or overflows.
+    /// Returns a [`Diag`] if the input is invalid or overflows.
     ///
-    /// [`Diagnostic`]: lunc_diag::Diagnostic
+    /// [`Diag`]: muonc_errors::Diag
     pub fn parse_u128_with_digit_count(&mut self, input: &str, radix: u8) -> ReResult<(u128, u32)> {
         self.parse_u128_advanced(
             input,

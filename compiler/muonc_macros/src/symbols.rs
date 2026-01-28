@@ -151,16 +151,20 @@ pub(crate) fn symbols(input: TokenStream) -> TokenStream {
         },
     ) in symbols.iter().enumerate()
     {
-        let id = i as u32;
+        let id = i as u32 + 1;
 
         let doc = category
             .as_ref()
-            .map(|cat| format!("*Part of the `{cat}` category.*"))
+            .map(|cat| format!("*Part of the `{cat}` category.*\n"))
             .into_iter();
 
+        let val_doc = format!("\n\n`{name} = {id};`");
+
+        // SAFETY: id starts at one so we are safe.
         sym_constants.push(quote! {
             #( #[doc = #doc] )*
-            pub const #name: crate::symbol::Symbol = crate::symbol::Symbol(#id);
+            #[doc = #val_doc]
+            pub const #name: crate::symbol::Symbol = crate::symbol::Symbol(unsafe { ::std::num::NonZeroU32::new_unchecked(#id) });
         });
 
         strlits.push(LitStr::new(val, Span::call_site()));

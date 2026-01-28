@@ -2,6 +2,7 @@
 
 use std::{
     fmt, mem,
+    num::NonZeroU32,
     ops::RangeInclusive,
     sync::{
         LazyLock, Mutex,
@@ -17,7 +18,7 @@ use crate::{DUMMY_SP, Span};
 
 /// An interned UTF-8 string.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Symbol(u32);
+pub struct Symbol(NonZeroU32);
 
 impl Symbol {
     /// Intern the following string.
@@ -29,7 +30,7 @@ impl Symbol {
     /// Create a new symbol from the id, it can cause UB if used incorrectly.
     #[inline]
     pub fn new(n: u32) -> Symbol {
-        Symbol(n)
+        Symbol(NonZeroU32::new(n).expect("invalid id, cannot be 0"))
     }
 
     /// Access the underlying string.
@@ -47,7 +48,7 @@ impl Symbol {
     /// Is this symbol predefined?
     #[inline]
     pub fn is_predefined(&self) -> bool {
-        self.0 < PREDEFINED_SYMBOLS_COUNT as u32
+        self.0.get() < PREDEFINED_SYMBOLS_COUNT as u32
     }
 
     /// Is the symbol the empty symbol?
@@ -58,13 +59,13 @@ impl Symbol {
     /// Get the internal id of the given symbol.
     #[inline]
     pub const fn id(&self) -> u32 {
-        self.0
+        self.0.get()
     }
 
     /// Get the internal id of the given symbol as a usize.
     #[inline]
     pub const fn as_usize(&self) -> usize {
-        self.0 as usize
+        self.id() as usize
     }
 
     /// Can this symbol be used as an identifier?
@@ -134,7 +135,7 @@ pub fn force_eval_global_interner() {
 #[derive(Debug)]
 pub struct Interner {
     /// string -> id
-    map: DashMap<&'static str, u32>,
+    map: DashMap<&'static str, NonZeroU32>,
     /// the stored strings.
     data: boxcar::Vec<&'static str>,
     /// the allocator of the strings.
@@ -144,16 +145,26 @@ pub struct Interner {
 }
 
 impl Interner {
+    const INNER_INVALID: &'static str = if cfg!(debug_assertions) {
+        "<INVALID!>"
+    } else {
+        ""
+    };
+
     /// Create a new empty symbol interner.
     pub fn with_predefined_symbols(predefined: &'static [&'static str]) -> Interner {
         // NOTE: here we make an exception, we do not allocate the strings
         // provided because we know they live forever, it saves sometime.
 
-        let map = DashMap::with_capacity(predefined.len());
-        let data = boxcar::Vec::with_capacity(predefined.len());
+        let map = DashMap::with_capacity(predefined.len() + 1);
+        let data = boxcar::Vec::with_capacity(predefined.len() + 1);
+
+        // push an invalid string at the 0th index so that we can access the
+        // interned string just by using the id without having to substract 1.
+        data.push(Interner::INNER_INVALID);
 
         for (i, sym) in predefined.iter().enumerate() {
-            map.insert(*sym, i as u32);
+            map.insert(*sym, NonZeroU32::new(i as u32 + 1).expect("invalid id"));
             data.push(*sym);
         }
 
@@ -161,7 +172,7 @@ impl Interner {
             map,
             data,
             alloc: Mutex::new(Bump::new()),
-            id: AtomicU32::new(predefined.len() as u32),
+            id: AtomicU32::new(predefined.len() as u32 + 1),
         }
     }
 
@@ -177,7 +188,7 @@ impl Interner {
             .lock()
             .expect("failed to lock the allocator of the interner");
 
-        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let id = NonZeroU32::new(self.id.fetch_add(1, Ordering::Relaxed)).expect("invalid id");
 
         // SAFETY: the lifetime is a lie but we know it.
         let alloced = unsafe { mem::transmute::<&str, &'static str>(allocator.alloc_str(str)) };
@@ -190,7 +201,7 @@ impl Interner {
 
     /// Get an interned string.
     pub fn get_str(&self, sym: Symbol) -> &str {
-        self.data[sym.0 as usize]
+        self.data[sym.as_usize()]
     }
 
     /// Get an owned slice of a range of symbols.
@@ -288,5 +299,13 @@ mod tests {
         assert!(!sym::As.can_identifier());
         assert!(!sym::Self_.can_identifier());
         assert!(!Symbol::intern("Hello, World!").can_identifier());
+    }
+
+    #[test]
+    fn predefined_symbols() {
+        assert_eq!(sym::empty.as_str(), "");
+        assert_eq!(sym::As.as_str(), "as");
+        assert_eq!(sym::While.as_str(), "while");
+        assert_eq!(sym::Import.as_str(), "import");
     }
 }
