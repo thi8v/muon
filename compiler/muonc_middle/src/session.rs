@@ -102,14 +102,15 @@ impl Session {
             let mut summary_diag = if codes.is_empty() {
                 diag
             } else {
-                diag.with_help(format!(
-                    "Some errors have detailed documentation: {}{}",
+                diag.with_note(format!(
+                    "Some errors have detailed documentation: {}{}, try 'muonc --explain {}'",
                     codes
                         .iter()
                         .map(|code| code.to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    dots
+                    dots,
+                    codes.first().expect("have at least one code??")
                 ))
             };
 

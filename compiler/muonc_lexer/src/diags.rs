@@ -14,7 +14,7 @@ impl Diagnostic for UnknownToken {
     fn into_diag(self, dcx: &DiagCtxt) -> Diag {
         dcx.diag(Level::Error)
             .with_code(ErrCode::UnknownToken)
-            .with_title(format!("unknwon start of token: {:?}", self.c))
+            .with_title(format!("unknown start of token: {:?}", self.c))
             .with_label(Label::primary(self.primary))
     }
 }
@@ -49,10 +49,6 @@ impl Diagnostic for UnknownCharacterEscape {
             .with_title(format!("unknown character escape: {}", self.es))
             .with_label(Label::primary(self.primary))
             .with_label(Label::secondary(self.lit_span).with_message("in this literal"))
-        // Diagnostic::error()
-        //     .with_code(ErrorCode::UnknownCharacterEscape)
-        //     .with_message(format!("unknown character escape: {}", self.es))
-        //     .with_label(Label::primary(self.loc.fid, self.loc))
     }
 }
 

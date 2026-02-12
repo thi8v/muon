@@ -8,3 +8,4 @@ edition.workspace = true
 muonc_span = { workspace = true }
 
 # other dependencies
+strsim = "0.11"

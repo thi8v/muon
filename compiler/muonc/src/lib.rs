@@ -3,29 +3,32 @@
 
 use std::{
     backtrace::{Backtrace, BacktraceStatus},
-    io, panic,
+    io::{self, stderr},
+    panic,
     path::PathBuf,
     process::{ExitCode, abort},
-    sync::Arc,
     thread,
     time::Instant,
 };
 
 use clap::{ArgAction, Parser as ArgParser, ValueEnum};
+use termimad::MadSkin;
+use thiserror::Error;
+
 use muonc_errors::prelude::*;
 use muonc_lexer::Lexer;
 use muonc_middle::{
     kv::{KeyValue, KvPair},
-    session::{Session, mk_session},
+    session::mk_session,
     target::TargetTriple,
 };
+use muonc_parser::Parser;
 use muonc_span::{
     FileId,
     source::FsFileLoader,
     symbol::{Symbol, force_eval_global_interner},
 };
-use termimad::MadSkin;
-use thiserror::Error;
+use muonc_utils::pretty::PrettyDump;
 
 mod build {
     // NOTE: it is a manual implementation of the call to the `shadow_rs!` macro
@@ -54,7 +57,7 @@ macro_rules! from_value_enum {
     override_usage = "muonc [OPTIONS] <INPUT>"
 )]
 pub struct MuonCli {
-    /// Specify the name of the orb being built, defaults to the input file
+    /// Specify the name of the package being built, defaults to the input file
     /// name with the extension
     #[arg(short = 'o', long)]
     output: Option<PathBuf>,
@@ -98,7 +101,7 @@ pub enum CompStage {
 from_value_enum!(CompStage);
 
 /// Compilation results.
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, ValueEnum, PartialEq)]
 pub enum CompResults {
     Inputfile,
     TokenStream,
@@ -107,7 +110,7 @@ pub enum CompResults {
 
 from_value_enum!(CompResults);
 
-// / Debug options
+/// Debug options
 #[derive(Default, Debug, KeyValue)]
 #[kv(name = "debug", short = 'D')]
 pub struct DebugOptions {
@@ -132,6 +135,13 @@ pub struct DebugOptions {
         default = "false"
     )]
     pub track_diagnostics: bool,
+}
+
+impl DebugOptions {
+    /// Does the options contains this compile result to print?
+    pub fn contains_print(&self, res: CompResults) -> bool {
+        self.print.iter().find(|this| **this == res).is_some()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -271,26 +281,35 @@ pub fn run() -> Result<(), CliError> {
         initial,
     );
 
-    /// helper to recover from errors in the compilation pipeline.
-    pub fn builderr<T>(sess: Arc<Session>, recoverable: Recovered<T>) -> Result<T, CliError> {
-        match recoverable {
-            Recovered::Yes(val, guarantee) => {
-                _ = guarantee;
-                Ok(val)
-            }
-            Recovered::No(guarantee) => {
-                let sess = sess.clone();
-                sess.emit_summary();
+    // /// helper to recover from errors in the compilation pipeline.
+    // pub fn builderr<T>(sess: Arc<Session>, recoverable: Recovered<T>) -> Result<T, CliError> {
+    //     match recoverable {
+    //         Recovered::Yes(val, guarantee) => {
+    //             _ = guarantee;
+    //             Ok(val)
+    //         }
+    //         Recovered::No(guarantee) => {
+    //             sess.emit_summary();
 
-                sess.dcx.render();
+    //             sess.dcx.render();
 
-                Err(CliError::BuildFailed {
-                    guarantee,
-                    failed: sess.dcx.failed(),
-                })
-            }
-        }
-    }
+    //             Err(CliError::BuildFailed {
+    //                 guarantee,
+    //                 failed: sess.dcx.failed(),
+    //             })
+    //         }
+    //     }
+    // }
+
+    let builderr = |guarantee: DiagGuaranteed| -> Result<(), CliError> {
+        sess.emit_summary();
+        sess.dcx.render();
+
+        Err(CliError::BuildFailed {
+            guarantee,
+            failed: sess.dcx.failed(),
+        })
+    };
 
     // 2. register the source code file of the root module.
     let root_fid = sess
@@ -300,17 +319,57 @@ pub fn run() -> Result<(), CliError> {
 
     debug_assert_eq!(root_fid, FileId::ROOT_MODULE);
 
+    //    maybe print the source code
+    if debug_opts.contains_print(CompResults::Inputfile) {
+        eprintln!(
+            "/* source code of {} */",
+            sess.sm.ref_path(root_fid).display()
+        );
+        eprintln!("{}", sess.sm.ref_src(root_fid));
+    }
+
     sess.elapsed_setup();
 
     // 3. lexes the root file
     let mut lexer = Lexer::new(sess.sm.ref_src(root_fid), sess.clone(), root_fid);
-    let tokenstream = lexer.produce().or_else(|err| builderr(sess.clone(), err))?;
+    let tokenstream = match lexer.produce().dere() {
+        Ok(ts) => ts,
+        Err(guarantee) => return builderr(guarantee),
+    };
 
-    dbg!(tokenstream);
-    dbg!(&sess.dcx.is_empty());
+    //    maybe print the token stream
+    if debug_opts.contains_print(CompResults::TokenStream) {
+        eprintln!("/* token stream */");
+        tokenstream
+            .fmt(&mut stderr(), sess.sm.ref_src(root_fid))
+            .expect("couldn't pretty print the token stream");
+    }
+
+    sess.elapsed_lexer();
+
+    // 4. parses the root file
+    let mut parser = Parser::new(tokenstream, sess.dcx.clone(), root_fid);
+    let ast = match parser.produce().dere() {
+        Ok(ast) => ast,
+        Err(guarantee) => return builderr(guarantee),
+    };
+
+    //    maybe print the token stream
+    if debug_opts.contains_print(CompResults::Ast) {
+        eprintln!("/* ast */");
+        ast.dump(&());
+    }
+
+    sess.elapsed_parser();
+
+    sess.set_total_timings();
+
+    if debug_opts.timings {
+        eprint!("\n{}", sess.timings.lock().unwrap())
+    }
 
     match sess.dcx.has_emitted() {
-        Some(guarantee) => builderr(sess, Recovered::No(guarantee)),
+        Some(guarantee) => builderr(guarantee),
         None => Ok(()),
     }
 }

@@ -381,6 +381,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum-ordinalize"
+version = "4.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a1091a7bb1f8f2c4b28f1fe2cef4980ca2d410a3d727d67ecc3178c9b0800f0"
+dependencies = [
+ "enum-ordinalize-derive",
+]
+
+[[package]]
+name = "enum-ordinalize-derive"
+version = "4.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ca9601fb2d62598ee17836250842873a413586e5d7ed88b356e38ddbb0ec631"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -756,6 +776,7 @@ dependencies = [
  "muonc_lexer",
  "muonc_macros",
  "muonc_middle",
+ "muonc_parser",
  "muonc_span",
  "muonc_token",
  "muonc_utils",
@@ -806,8 +827,21 @@ dependencies = [
  "muonc_errors",
  "muonc_macros",
  "muonc_span",
+ "muonc_token",
  "muonc_utils",
  "thiserror",
+]
+
+[[package]]
+name = "muonc_parser"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "muonc_errors",
+ "muonc_middle",
+ "muonc_span",
+ "muonc_token",
+ "muonc_utils",
 ]
 
 [[package]]
@@ -824,6 +858,7 @@ dependencies = [
 name = "muonc_token"
 version = "0.1.0"
 dependencies = [
+ "enum-ordinalize",
  "muonc_span",
 ]
 
@@ -832,6 +867,7 @@ name = "muonc_utils"
 version = "0.1.0"
 dependencies = [
  "muonc_span",
+ "strsim",
 ]
 
 [[package]]

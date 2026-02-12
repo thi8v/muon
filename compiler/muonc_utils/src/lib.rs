@@ -2,7 +2,13 @@
 
 pub mod pretty;
 
-use std::{fmt::Display, fmt::Write};
+use std::{
+    cmp::Ordering,
+    fmt::{Display, Write},
+};
+
+use muonc_span::symbol::Symbol;
+use strsim::sorensen_dice;
 
 use crate::pretty::PrettyDump;
 
@@ -216,4 +222,37 @@ pub fn fast_digit_length<const RADIX: u32>(n: u128) -> u32 {
             _ /* up to u128::MAX */   => 39,
         }
     }
+}
+
+/// Adaptive threshold based on word length
+pub fn adaptive_threshold(len: usize) -> f64 {
+    match len {
+        0..=3 => 0.9,
+        4..=6 => 0.8,
+        7..=12 => 0.7,
+        _ => 0.6,
+    }
+}
+
+/// Suggests the closest match from a dictionary to a given word.
+///
+/// NB: this function is internally backed by Sørensen-Dice coefficient, nothing
+/// is returned if the maximun score isn't above [`adaptive_threshold`].
+pub fn suggest_similar(
+    query: Symbol,
+    dictionary: impl IntoIterator<Item = Symbol>,
+) -> Option<Symbol> {
+    let len = query.as_str().chars().count();
+    let threshold = adaptive_threshold(len);
+
+    dictionary
+        .into_iter()
+        .map(|word| {
+            let score = sorensen_dice(query.as_str(), word.as_str());
+
+            (word, score)
+        })
+        .filter(|(_, score)| *score >= threshold)
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
+        .map(|(word, _)| word)
 }

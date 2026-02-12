@@ -2,12 +2,13 @@
 
 use std::{
     fmt::Debug,
-    fs, io,
+    fs::File,
+    io::{self, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use crate::FileId;
+use crate::{Bsz, FileId};
 
 /// A source file, mapped in [`SourceMap`].
 #[derive(Debug, Clone)]
@@ -15,6 +16,11 @@ pub struct SourceFile {
     pub path: PathBuf,
     pub src: Arc<String>,
     pub fid: FileId,
+}
+
+impl SourceFile {
+    /// The maximum size of a `SourceFile` in bytes.
+    pub const MAX_FILE_SIZE: usize = Bsz::MAX.as_usize();
 }
 
 /// An abstraction over a file loader.
@@ -36,7 +42,23 @@ impl FileLoader for FsFileLoader {
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
-        fs::read_to_string(path)
+        let mut file = File::open(path)?;
+        let size = file
+            .metadata()
+            .map(|metadata| metadata.len())
+            .ok()
+            .unwrap_or(0);
+
+        if size > SourceFile::MAX_FILE_SIZE as u64 {
+            return Err(io::Error::other(format!(
+                "source code files larger than {} bytes are not supported.",
+                SourceFile::MAX_FILE_SIZE
+            )));
+        }
+
+        let mut contents = String::with_capacity(size as usize); // heuristic
+        file.read_to_string(&mut contents)?;
+        Ok(contents)
     }
 }
 

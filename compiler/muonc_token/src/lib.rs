@@ -5,56 +5,80 @@ use std::{
     cmp::Ordering,
     fmt::{self, Debug, Display},
     io::{self, Write},
-    mem,
+    mem::{self},
     ops::Range,
 };
 
+use enum_ordinalize::Ordinalize;
 use muonc_span::{
-    DUMMY_SP, Span, span,
+    Bsz, DUMMY_SP, Span, span,
     symbol::{self, Symbol, sym},
 };
 
-/// A list of tokens is ensured to end with the `Eof` token.
-#[derive(Clone, Default, PartialEq)]
-pub struct TokenStream {
-    tokens: Vec<Token>,
-    finished: bool,
-    eof: Option<Token>,
+mod private {
+    use crate::{TsBuilding, TsSealed};
+
+    pub trait Sealed {}
+
+    impl Sealed for TsSealed {}
+    impl Sealed for TsBuilding {}
 }
 
-impl TokenStream {
-    /// Create a new empty TokenStream.
-    pub fn new() -> TokenStream {
+/// Token stream status, either:
+/// * [`TsSealed`]
+/// * [`TsBuilding`]
+pub trait TsStatus: private::Sealed + Clone + Default + PartialEq {}
+
+/// Marker type for a sealed token stream.
+#[derive(Clone, Default, PartialEq)]
+pub struct TsSealed;
+
+/// Marker type for a token stream being built.
+#[derive(Clone, Default, PartialEq)]
+pub struct TsBuilding;
+
+impl TsStatus for TsBuilding {}
+impl TsStatus for TsSealed {}
+
+/// A list of tokens is ensured to end with the `Eof` token.
+#[derive(Clone, Default, PartialEq)]
+pub struct TokenStream<S: TsStatus> {
+    tokens: Vec<Token>,
+    eof: Option<Token>,
+    status: S,
+}
+
+impl TokenStream<TsBuilding> {
+    /// Create a new empty TokenStream with a [`TsBuilding`] status.
+    pub fn new() -> TokenStream<TsBuilding> {
         TokenStream {
             tokens: Vec::new(),
-            finished: false,
             eof: None,
+            status: TsBuilding,
         }
     }
 
     /// Finish a TokenStream, will ensure the last token is an end of file token
     /// so if it's not this function will **panic**.
     #[track_caller]
-    pub fn finish(&mut self) {
-        assert!(!self.finished, "token stream already finished");
-        assert_eq!(
-            self.tokens.last().map(|t| &t.tt),
-            Some(&TokenType::Eof),
-            "the last token of a token stream must be the end of file token."
-        );
-
-        self.finished = true;
-        self.eof = Some(self.tokens.last().unwrap().clone());
+    pub fn seal(self) -> Result<TokenStream<TsSealed>, TokenStream<TsBuilding>> {
+        if let Some(eof) = self.tokens.last()
+            && eof.tt == TokenType::Eof
+        {
+            Ok(TokenStream {
+                eof: Some(eof.clone()),
+                tokens: self.tokens,
+                status: TsSealed,
+            })
+        } else {
+            Err(self)
+        }
     }
 
     /// Pushes the TokenType with its start and end offsets and return `true`
     /// if the token is End Of File
     #[track_caller]
     pub fn push(&mut self, token: Token) -> bool {
-        assert!(
-            !self.finished,
-            "can't push a token to the token stream if it's already finished"
-        );
         assert_ne!(
             token.tt,
             TokenType::Dummy,
@@ -67,34 +91,20 @@ impl TokenStream {
 
         is_eof
     }
+}
 
+impl TokenStream<TsSealed> {
     /// Get the token a the index `idx`, always returns the Eof token if `idx`
     /// is out of bounds of the stream.
-    ///
-    /// # Panic
-    ///
-    /// This function will panic if you call it on a non-finished token stream
     #[track_caller]
     pub fn get(&self, idx: usize) -> &Token {
-        assert!(
-            self.finished,
-            "can't access tokens while the token stream isn't finished."
-        );
         self.tokens.get(idx).unwrap_or_else(|| self.get_eof())
     }
 
     /// Get a range of token, if the range exceeds the number of token it will
     /// return `Eof` token.
-    ///
-    /// # Panic
-    ///
-    /// This function will panic if you call it on a non-finished token stream
     #[track_caller]
     pub fn get_slice<'a>(&'a self, range: Range<usize>) -> Cow<'a, [Token]> {
-        assert!(
-            self.finished,
-            "can't access tokens while the token stream isn't finished."
-        );
         let start = range.start;
         let end = range.end;
 
@@ -136,18 +146,9 @@ impl TokenStream {
 
     /// Get the last token of a finished token stream, it will always be the
     /// Eof token
-    ///
-    /// # Panic
-    ///
-    /// This function will panic if you call it on a non-finished token stream
-    #[inline(always)]
+    #[inline]
     #[track_caller]
     pub fn get_eof(&self) -> &Token {
-        assert!(
-            self.finished,
-            "can't access tokens while the token stream isn't finished."
-        );
-
         let Some(eof) = &self.eof else {
             // NB: `TokenStream::eof` is always `Some(..)` when it is `TokenStream::finished`
             unreachable!();
@@ -156,6 +157,20 @@ impl TokenStream {
         eof
     }
 
+    /// Format the token stream
+    pub fn fmt(&self, out: &mut impl Write, src: &str) -> io::Result<()> {
+        writeln!(out, "{{")?;
+
+        for token in &self.tokens {
+            token.fmt(out, src)?;
+        }
+
+        writeln!(out, "}}")?;
+        Ok(())
+    }
+}
+
+impl<S: TsStatus> TokenStream<S> {
     /// The count of tokens, including the last Eof token.
     pub fn count(&self) -> usize {
         self.tokens.len()
@@ -180,21 +195,9 @@ impl TokenStream {
             unimplemented!("cannot `replace_with_two` if idx >= self.count().")
         }
     }
-
-    /// Format the token stream
-    pub fn fmt(&self, out: &mut impl Write, src: &str) -> io::Result<()> {
-        writeln!(out, "{{")?;
-
-        for token in &self.tokens {
-            token.fmt(out, src)?;
-        }
-
-        writeln!(out, "}}")?;
-        Ok(())
-    }
 }
 
-impl Debug for TokenStream {
+impl<S: TsStatus> Debug for TokenStream<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(&self.tokens).finish()
     }
@@ -464,9 +467,9 @@ impl TokenType {
     /// something that can have a variable length, None is returned.
     ///
     /// eg: `TokenType::EqEq` -> `Some(2)`
-    pub fn length(&self) -> Option<usize> {
+    pub fn length(&self) -> Option<Bsz> {
         match self {
-            Self::Eof => Some(0),
+            Self::Eof => Some(Bsz(0)),
 
             Self::LParen
             | Self::RParen
@@ -490,7 +493,7 @@ impl TokenType {
             | Self::Or
             | Self::Percent
             | Self::Dot
-            | Self::Pound => Some(1),
+            | Self::Pound => Some(Bsz(1)),
 
             Self::ColonColon
             | Self::EqEq
@@ -506,33 +509,120 @@ impl TokenType {
             | Self::Kw(Keyword::As)
             | Self::Kw(Keyword::If)
             | Self::Kw(Keyword::In)
-            | Self::Kw(Keyword::Pub) => Some(2),
+            | Self::Kw(Keyword::Pub)
+            | Self::Kw(Keyword::Pkg) => Some(Bsz(2)),
 
             Self::Kw(Keyword::For)
             | Self::Kw(Keyword::Fun)
             | Self::Kw(Keyword::Let)
-            | Self::Kw(Keyword::Mut) => Some(3),
+            | Self::Kw(Keyword::Mut) => Some(Bsz(3)),
 
             Self::Kw(Keyword::Else)
             | Self::Kw(Keyword::Impl)
             | Self::Kw(Keyword::Loop)
             | Self::Kw(Keyword::Null)
             | Self::Kw(Keyword::True)
-            | Self::Kw(Keyword::Self_) => Some(4),
+            | Self::Kw(Keyword::Self_) => Some(Bsz(4)),
 
             Self::Kw(Keyword::Break)
             | Self::Kw(Keyword::False)
             | Self::Kw(Keyword::Trait)
-            | Self::Kw(Keyword::While) => Some(5),
+            | Self::Kw(Keyword::While) => Some(Bsz(5)),
 
-            Self::Kw(Keyword::Extern) | Self::Kw(Keyword::Return) => Some(6),
+            Self::Kw(Keyword::Extern) | Self::Kw(Keyword::Return) => Some(Bsz(6)),
 
-            Self::Kw(Keyword::Comptime) | Self::Kw(Keyword::Continue) => Some(8),
+            Self::Kw(Keyword::Comptime) | Self::Kw(Keyword::Continue) => Some(Bsz(8)),
 
-            Self::Ident(sym) => Some(sym.len()),
+            Self::Ident(sym) => Some(sym.len().into()),
             Self::Lit(_) => None,
             Self::Dummy => None,
         }
+    }
+
+    /// Convert the token type to an ExpToken
+    pub fn to_exp(&self) -> ExpToken {
+        use TokenType as Tt;
+
+        match self {
+            Tt::LParen => ExpToken::LParen,
+            Tt::RParen => ExpToken::RParen,
+            Tt::LBracket => ExpToken::LBracket,
+            Tt::RBracket => ExpToken::RBracket,
+            Tt::LCurly => ExpToken::LCurly,
+            Tt::RCurly => ExpToken::RCurly,
+            Tt::Plus => ExpToken::Plus,
+            Tt::Minus => ExpToken::Minus,
+            Tt::Star => ExpToken::Star,
+            Tt::Slash => ExpToken::Slash,
+            Tt::Colon => ExpToken::Colon,
+            Tt::ColonColon => ExpToken::ColonColon,
+            Tt::Comma => ExpToken::Comma,
+            Tt::Eq => ExpToken::Eq,
+            Tt::EqEq => ExpToken::EqEq,
+            Tt::BangEq => ExpToken::BangEq,
+            Tt::Bang => ExpToken::Bang,
+            Tt::LtEq => ExpToken::LtEq,
+            Tt::Lt => ExpToken::Lt,
+            Tt::LtLt => ExpToken::LtLt,
+            Tt::Gt => ExpToken::Gt,
+            Tt::GtGt => ExpToken::GtGt,
+            Tt::GtEq => ExpToken::GtEq,
+            Tt::Semi => ExpToken::Semi,
+            Tt::MinusGt => ExpToken::MinusGt,
+            Tt::Caret => ExpToken::Caret,
+            Tt::And => ExpToken::And,
+            Tt::AndAnd => ExpToken::AndAnd,
+            Tt::Or => ExpToken::Or,
+            Tt::OrOr => ExpToken::OrOr,
+            Tt::Percent => ExpToken::Percent,
+            Tt::Dot => ExpToken::Dot,
+            Tt::DotStar => ExpToken::DotStar,
+            Tt::Pound => ExpToken::Pound,
+            Tt::Kw(Keyword::As) => ExpToken::KwAs,
+            Tt::Kw(Keyword::Break) => ExpToken::KwBreak,
+            Tt::Kw(Keyword::Comptime) => ExpToken::KwComptime,
+            Tt::Kw(Keyword::Continue) => ExpToken::KwContinue,
+            Tt::Kw(Keyword::Else) => ExpToken::KwElse,
+            Tt::Kw(Keyword::Extern) => ExpToken::KwExtern,
+            Tt::Kw(Keyword::False) => ExpToken::KwFalse,
+            Tt::Kw(Keyword::For) => ExpToken::KwFor,
+            Tt::Kw(Keyword::Fun) => ExpToken::KwFun,
+            Tt::Kw(Keyword::If) => ExpToken::KwIf,
+            Tt::Kw(Keyword::Impl) => ExpToken::KwImpl,
+            Tt::Kw(Keyword::In) => ExpToken::KwIn,
+            Tt::Kw(Keyword::Let) => ExpToken::KwLet,
+            Tt::Kw(Keyword::Loop) => ExpToken::KwLoop,
+            Tt::Kw(Keyword::Mut) => ExpToken::KwMut,
+            Tt::Kw(Keyword::Null) => ExpToken::KwNull,
+            Tt::Kw(Keyword::Pkg) => ExpToken::KwPkg,
+            Tt::Kw(Keyword::Pub) => ExpToken::KwPub,
+            Tt::Kw(Keyword::Return) => ExpToken::KwReturn,
+            Tt::Kw(Keyword::Self_) => ExpToken::KwSelf,
+            Tt::Kw(Keyword::Trait) => ExpToken::KwTrait,
+            Tt::Kw(Keyword::True) => ExpToken::KwTrue,
+            Tt::Kw(Keyword::While) => ExpToken::KwWhile,
+            Tt::Ident(_) => ExpToken::Ident,
+            Tt::Lit(_) => ExpToken::Lit,
+            Tt::Eof => ExpToken::Eof,
+            Tt::Dummy => ExpToken::Dummy,
+        }
+    }
+
+    /// Returns `true` if the token type can, for sure, separate two statement.
+    ///
+    /// [`Semi`]: TokenType::Semi
+    #[must_use]
+    pub fn is_stmt_separator(&self) -> bool {
+        matches!(self, Self::Semi | Self::RCurly)
+    }
+
+    /// Returns `true` if this token can be the start of an item
+    #[must_use]
+    pub fn can_begin_item(&self) -> bool {
+        matches!(
+            self,
+            Self::Kw(Keyword::Pub | Keyword::Mut | Keyword::Extern) | Self::Ident(_)
+        )
     }
 }
 
@@ -590,9 +680,10 @@ impl Display for TokenType {
 ///
 /// 1. Add the keyword in this enum in alphabetical order
 /// 2. Add the keyword in the predefined symbols in [`muonc_span::symbol`]
-/// 3. Add the keyword to the tests: `symbol_to_keyword` and `keyword_to_symbol`
+/// 3. Add the keyword to the [`ExpToken`].
+/// 4. Add the keyword to the tests: `symbol_to_keyword` and `keyword_to_symbol`
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Ordinalize)]
 pub enum Keyword {
     /// `as`
     As,
@@ -626,6 +717,8 @@ pub enum Keyword {
     Mut,
     /// `null`
     Null,
+    /// `pkg`
+    Pkg,
     /// `pub`
     Pub,
     /// `return`
@@ -643,12 +736,12 @@ pub enum Keyword {
 impl Keyword {
     /// Converts this keyword into a symbol
     pub fn as_symbol(&self) -> Symbol {
-        let idx = *self as u8;
+        let idx = self.ordinal();
 
         Symbol::new(
             symbol::categories::KEYWORD_START
                 .id()
-                .wrapping_add(idx as u32),
+                .wrapping_add(idx as _),
         )
     }
 
@@ -660,8 +753,7 @@ impl Keyword {
 
         let idx = sym.as_usize() - symbol::categories::KEYWORD_START.as_usize();
 
-        // SAFETY: this operation is safe because we checked `idx` was a valid keyword.
-        unsafe { Some(mem::transmute::<u8, Keyword>(idx as u8)) }
+        Keyword::from_ordinal(idx as _)
     }
 }
 
@@ -718,6 +810,7 @@ impl PartialEq<ExpToken> for TokenType {
             Self::Kw(Keyword::Loop) => *other == ExpToken::KwLoop,
             Self::Kw(Keyword::Mut) => *other == ExpToken::KwMut,
             Self::Kw(Keyword::Null) => *other == ExpToken::KwNull,
+            Self::Kw(Keyword::Pkg) => *other == ExpToken::KwPkg,
             Self::Kw(Keyword::Pub) => *other == ExpToken::KwPub,
             Self::Kw(Keyword::Return) => *other == ExpToken::KwReturn,
             Self::Kw(Keyword::Self_) => *other == ExpToken::KwSelf,
@@ -781,6 +874,46 @@ impl Lit {
             tag: None,
         }
     }
+
+    /// Takes the value inside and return it as a char
+    pub fn as_char(&self) -> Option<char> {
+        if self.kind == LitKind::Char {
+            // SAFETY: we checked above.
+            unsafe { Some(self.value.char) }
+        } else {
+            None
+        }
+    }
+
+    /// Takes the value inside and return it as an integer
+    pub fn as_int(&self) -> Option<u128> {
+        if self.kind == LitKind::Integer {
+            // SAFETY: we checked above.
+            unsafe { Some(self.value.int) }
+        } else {
+            None
+        }
+    }
+
+    /// Takes the value inside and return it as an float
+    pub fn as_float(&self) -> Option<f64> {
+        if self.kind == LitKind::Float {
+            // SAFETY: we checked above.
+            unsafe { Some(self.value.float) }
+        } else {
+            None
+        }
+    }
+
+    /// Takes the value inside and return it as an string
+    pub fn as_string(&self) -> Option<Symbol> {
+        if self.kind == LitKind::Str {
+            // SAFETY: we checked above.
+            unsafe { Some(self.value.str) }
+        } else {
+            None
+        }
+    }
 }
 
 impl PartialOrd for Lit {
@@ -820,6 +953,18 @@ impl Debug for Lit {
             .field("value", self.value.as_debug_with(self.kind))
             .field("tag", &self.tag)
             .finish()
+    }
+}
+
+impl Display for Lit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.kind, self.value.as_display_with(self.kind))?;
+
+        if let Some(tag) = self.tag {
+            write!(f, " (tag = {tag})")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -912,7 +1057,7 @@ impl LitValue {
 /// *This is inspired by [rustc's TokenType].*
 ///
 /// [rustc's TokenType]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_parse/parser/token_type/enum.TokenType.html
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Ordinalize)]
 pub enum ExpToken {
     LParen,
     RParen,
@@ -964,6 +1109,7 @@ pub enum ExpToken {
     KwLoop,
     KwMut,
     KwNull,
+    KwPkg,
     KwPub,
     KwReturn,
     KwSelf,
@@ -1037,6 +1183,7 @@ impl Display for ExpToken {
             Et::KwMut => write!(f, "keyword `mut`"),
             Et::KwNull => write!(f, "keyword `null`"),
             Et::KwPub => write!(f, "keyword `pub`"),
+            Et::KwPkg => write!(f, "keyword `pkg`"),
             Et::KwReturn => write!(f, "keyword `return`"),
             Et::KwSelf => write!(f, "keyword `self`"),
             Et::KwTrait => write!(f, "keyword `trait`"),
@@ -1156,7 +1303,7 @@ mod tests {
     use muonc_span::FileId;
     use symbol::sym;
 
-    fn build_ts() -> TokenStream {
+    fn build_ts() -> TokenStream<TsSealed> {
         let mut ts = TokenStream::new();
 
         ts.push(Token {
@@ -1179,9 +1326,8 @@ mod tests {
             tt: TokenType::Eof,
             span: span(12, 12, FileId::ROOT_MODULE),
         });
-        ts.finish();
 
-        ts
+        ts.seal().unwrap()
     }
 
     #[test]
@@ -1413,8 +1559,8 @@ mod tests {
             span: span(12, 12, FileId::ROOT_MODULE),
         });
 
-        expected_ts.finish();
-        ts.finish();
+        let expected_ts = expected_ts.seal().unwrap();
+        let mut ts = ts.seal().unwrap();
 
         const COLONCOLON_IDX: usize = 2;
         let coloncolon = ts.get(COLONCOLON_IDX);
@@ -1524,6 +1670,7 @@ mod tests {
         assert_eq!(Keyword::Loop.as_symbol(), sym::Loop);
         assert_eq!(Keyword::Mut.as_symbol(), sym::Mut);
         assert_eq!(Keyword::Null.as_symbol(), sym::Null);
+        assert_eq!(Keyword::Pkg.as_symbol(), sym::Pkg);
         assert_eq!(Keyword::Pub.as_symbol(), sym::Pub);
         assert_eq!(Keyword::Return.as_symbol(), sym::Return);
         assert_eq!(Keyword::Self_.as_symbol(), sym::Self_);
@@ -1551,6 +1698,7 @@ mod tests {
         assert_eq!(Keyword::from_symbol(sym::Loop), Some(Keyword::Loop));
         assert_eq!(Keyword::from_symbol(sym::Mut), Some(Keyword::Mut));
         assert_eq!(Keyword::from_symbol(sym::Null), Some(Keyword::Null));
+        assert_eq!(Keyword::from_symbol(sym::Pkg), Some(Keyword::Pkg));
         assert_eq!(Keyword::from_symbol(sym::Pub), Some(Keyword::Pub));
         assert_eq!(Keyword::from_symbol(sym::Return), Some(Keyword::Return));
         assert_eq!(Keyword::from_symbol(sym::Self_), Some(Keyword::Self_));

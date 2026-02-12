@@ -4,11 +4,8 @@ use std::{mem, sync::Arc};
 
 use muonc_errors::prelude::*;
 use muonc_middle::session::Session;
-use muonc_span::{
-    FileId, Span, span,
-    symbol::{Symbol, sym},
-};
-use muonc_token::{Keyword, Lit, Token, TokenStream, TokenType};
+use muonc_span::prelude::*;
+use muonc_token::{Keyword, Lit, Token, TokenStream, TokenType, TsSealed};
 
 use crate::diags::{
     EmptyCharLiteral, ExpectedExponentPart, InvalidDigitInNumber, InvalidUnicodeEscape,
@@ -32,7 +29,7 @@ pub mod diags;
 #[derive(Debug, Clone)]
 pub struct IntegerLexOptions {
     /// the base position where the parsing of the integer starts
-    base_bytes: usize,
+    base_bytes: Bsz,
     /// span of the integer that is currently being parsed
     int_span: Option<Span>,
     /// do we emit diagnostic while parsing the number?
@@ -47,14 +44,17 @@ pub struct IntegerLexOptions {
 /// Lexing cursor.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cursor {
-    bytes: usize,
-    chars: usize,
+    bytes: Bsz,
+    chars: Bsz,
 }
 
 impl Cursor {
     /// Create a zeroed cursor
     pub fn new() -> Cursor {
-        Cursor { bytes: 0, chars: 0 }
+        Cursor {
+            bytes: Bsz(0),
+            chars: Bsz(0),
+        }
     }
 
     /// Increments the cursor according to the first byte of the following
@@ -65,17 +65,22 @@ impl Cursor {
     }
 
     /// Offset in bytes since the start.
-    pub fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> Bsz {
         self.bytes
     }
 
+    /// Offset in bytes since the start.
+    pub fn bytes_usize(&self) -> usize {
+        self.bytes.as_usize()
+    }
+
     /// Takes the byte offset of the cursor and adds `offset` and returns it.
-    pub fn bytes_with(&self, offset: isize) -> usize {
-        (self.bytes as isize + offset) as usize
+    pub fn bytes_with(&self, offset: i32) -> Bsz {
+        Bsz::try_from(self.bytes.0 as i32 + offset).expect("failed to offset bsz")
     }
 
     /// The offset in amount of UTF-8 characters since the start.
-    pub fn chars(&self) -> usize {
+    pub fn chars(&self) -> Bsz {
         self.chars
     }
 }
@@ -83,7 +88,7 @@ impl Cursor {
 /// Lexer -- turns source code into a stream of tokens.
 #[derive(Debug, Clone)]
 pub struct Lexer<'source> {
-    /// The starting positon of the current token
+    /// The starting position of the current token
     prev: Cursor,
     /// The current position where the lexer is working
     cur: Cursor,
@@ -152,8 +157,10 @@ impl<'source> Lexer<'source> {
     /// Returns the `dist` characters ahead of the current position.
     #[inline]
     #[must_use = "looking ahead is a no-op if you don't use the result"]
-    pub fn ahead(&self, dist: isize) -> Option<char> {
-        self.chars.get(self.cur.bytes_with(dist)).copied()
+    pub fn ahead(&self, dist: i32) -> Option<char> {
+        self.chars
+            .get(self.cur.bytes_with(dist).as_usize())
+            .copied()
     }
 
     /// Eats the current character and returns it.
@@ -167,7 +174,7 @@ impl<'source> Lexer<'source> {
 
     /// Eats until we reach the `stoper` character but we do not eat it.
     pub fn eat_until(&mut self, stopper: char) -> &str {
-        let start = self.cur.bytes();
+        let start = self.cur.bytes().as_usize();
 
         loop {
             match self.current() {
@@ -179,7 +186,7 @@ impl<'source> Lexer<'source> {
             }
         }
 
-        &self.src[start..self.cur.bytes()]
+        &self.src[start..self.cur.bytes_usize()]
     }
 
     /// Eats the current character and assert (in debug mode only) that it is the expected one.
@@ -197,13 +204,13 @@ impl<'source> Lexer<'source> {
     /// Eats something that is an alphanumerical sequence of characters without
     /// whitespaces and returns a string to it.
     pub fn eat_word(&mut self) -> &'source str {
-        let start = self.cur.bytes();
+        let start = self.cur.bytes_usize();
 
         while let Some(c @ ('A'..='Z' | 'a'..='z' | '_' | '0'..='9')) = self.current() {
             self.eat_assert(c);
         }
 
-        let end = self.cur.bytes();
+        let end = self.cur.bytes_usize();
 
         &self.src[start..end]
     }
@@ -213,8 +220,8 @@ impl<'source> Lexer<'source> {
         Symbol::intern(self.eat_word())
     }
 
-    /// Lex the all source code and returns a **finished** token stream.
-    pub fn produce(&mut self) -> ReResult<TokenStream> {
+    /// Lex the all source code and returns a **sealed** token stream.
+    pub fn produce(&mut self) -> ReResult<TokenStream<TsSealed>> {
         let mut ts = TokenStream::new();
 
         // an indicator if whetever we have failed but did recovered.
@@ -248,12 +255,12 @@ impl<'source> Lexer<'source> {
             }
         }
 
-        ts.finish();
+        let sealed = ts.seal().expect("unable to seal the token stream");
 
         if let Some(guarantee) = tainted_by_errors {
-            Err(Recovered::Yes(ts, guarantee))
+            Err(Recovered::Yes(sealed, guarantee))
         } else {
-            Ok(ts)
+            Ok(sealed)
         }
     }
 
@@ -989,13 +996,13 @@ impl<'source> Lexer<'source> {
             str.push(match self.current() {
                 Some('\'') if !string => {
                     self.dcx.emit(NotEnoughHexDigits {
-                        primary: span(self.prev.bytes(), self.cur.bytes() + 1, self.fid),
+                        primary: span(self.prev.bytes(), self.cur.bytes() + Bsz(1), self.fid),
                     });
                     break;
                 }
                 Some('"') if string => {
                     self.dcx.emit(NotEnoughHexDigits {
-                        primary: span(self.prev.bytes(), self.cur.bytes() + 1, self.fid),
+                        primary: span(self.prev.bytes(), self.cur.bytes() + Bsz(1), self.fid),
                     });
                     break;
                 }
@@ -1086,7 +1093,7 @@ impl<'source> Lexer<'source> {
                     if options.emit_diags {
                         self.dcx.emit(InvalidDigitInNumber {
                             c,
-                            primary: span(pos, pos + 1, self.fid),
+                            primary: span(pos, pos + Bsz(1), self.fid),
                             int_span: options.int_span.unwrap_or_else(|| self.span()),
                         });
                     }
@@ -1101,7 +1108,7 @@ impl<'source> Lexer<'source> {
                 let pos = options.base_bytes + i;
                 self.dcx.emit(InvalidDigitInNumber {
                     c,
-                    primary: span(pos, pos + 1, self.fid),
+                    primary: span(pos, pos + Bsz(1), self.fid),
                     int_span: options.int_span.unwrap_or_else(|| self.span()),
                 });
             } else {

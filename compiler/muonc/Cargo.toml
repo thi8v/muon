@@ -9,6 +9,7 @@ muonc_errors = { workspace = true }
 muonc_lexer = { workspace = true }
 muonc_macros = { workspace = true }
 muonc_middle = { workspace = true }
+muonc_parser = { workspace = true }
 muonc_span = { workspace = true }
 muonc_token = { workspace = true }
 muonc_utils = { workspace = true }

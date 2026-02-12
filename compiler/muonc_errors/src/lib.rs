@@ -14,7 +14,7 @@ use std::{
 use bitflags::bitflags;
 use indexmap::IndexSet;
 use muonc_macros::codes_enum;
-use muonc_span::{Span, source::SourceMap, symbol::Symbol};
+use muonc_span::{Bsz, Span, source::SourceMap, symbol::Symbol};
 use muonc_utils::pluralize;
 
 use crate::renderer::Renderer;
@@ -52,13 +52,17 @@ codes_enum! {
         InvalidUnicodeEscape = 11,
         ExpectedExponentPart = 12,
         NoDigitsInANonDecimal = 13,
+        MutQualifierNotPermitted = 14,
+        VisQualifierNotPermitted = 15,
+        InvalidAbi = 16,
+        MalformedIfExpr = 17,
     }
 }
 
 codes_enum! {
     /// List of all the warnings Muon can emit.
     pub enum WarnCode: 'W' {
-        // NOTE: placeholders are here temporarly because WarnCode should have
+        // NOTE: placeholders are here temporarily because WarnCode should have
         // the size of a u8
         __PlaceHolder1 = 1,
         __PlaceHolder2 = 2,
@@ -69,23 +73,23 @@ codes_enum! {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagEmitLoc {
     pub file: Cow<'static, str>,
-    pub line: u32,
-    pub col: u32,
+    pub line: Bsz,
+    pub col: Bsz,
 }
 
 impl DiagEmitLoc {
     const NOWHERE: DiagEmitLoc = DiagEmitLoc {
         file: Cow::Borrowed("<!NOWHERE!>"),
-        line: u32::MAX,
-        col: u32::MAX,
+        line: Bsz::MAX,
+        col: Bsz::MAX,
     };
 
     // marker to tell the dcx to never add the debug thing to a diagnostic, used by the summary diagnostic.
     #[doc(hidden)]
     pub const __NEVER_DEBUG_INFO: DiagEmitLoc = DiagEmitLoc {
         file: Cow::Borrowed("<!NEVER_DEBUG_INFO!>"),
-        line: u32::MAX,
-        col: u32::MAX,
+        line: Bsz::MAX,
+        col: Bsz::MAX,
     };
 }
 
@@ -120,8 +124,8 @@ impl From<&'static Location<'static>> for DiagEmitLoc {
 
         DiagEmitLoc {
             file: Cow::Owned(file.to_str().unwrap().to_owned()),
-            line: loc.line(),
-            col: loc.column(),
+            line: loc.line().into(),
+            col: loc.column().into(),
         }
     }
 }
@@ -237,8 +241,8 @@ impl FromStr for Code {
 /// A diagnostic message.
 #[derive(Debug, Clone)]
 pub struct Message {
-    level: Level,
-    msg: String,
+    pub level: Level,
+    pub msg: String,
 }
 
 /// The style of the label.
@@ -321,6 +325,12 @@ impl Diag {
         self
     }
 
+    /// Extend the labels of this diagnostic with the provided iterator
+    pub fn with_labels_iter(mut self, iter: impl IntoIterator<Item = Label>) -> Diag {
+        self.span.spans.extend(iter);
+        self
+    }
+
     /// Append a message to the diagnostic.
     pub fn with_message(mut self, level: Level, message: impl Display) -> Diag {
         self.messages.push(Message {
@@ -328,6 +338,20 @@ impl Diag {
             msg: message.to_string(),
         });
         self
+    }
+
+    /// Append many message to the diagnostic.
+    pub fn with_message_iter(mut self, iter: impl IntoIterator<Item = Message>) -> Diag {
+        self.messages.extend(iter);
+        self
+    }
+
+    /// Append many help messages
+    pub fn with_help_iter(self, iter: impl IntoIterator<Item = String>) -> Diag {
+        self.with_message_iter(iter.into_iter().map(|msg| Message {
+            level: Level::Help,
+            msg,
+        }))
     }
 
     /// Append an help message to the diagnostic.
@@ -547,7 +571,7 @@ impl DiagCtxt {
         eprintln!("{}", renderer.render());
     }
 
-    /// Returns the 5 first error code that have been emited and `true` if there is more than 5.
+    /// Returns the 5 first error code that have been emitted and `true` if there is more than 5.
     pub fn err_codes(&self) -> (Vec<ErrCode>, bool) {
         self.with_inner(|this| {
             let codes = this.emitted_err_code.iter().take(5).copied().collect();
@@ -615,7 +639,7 @@ impl fmt::Debug for DiagCtxt {
 }
 
 /// The recoverability of an error, with a guarantee that the diagnostic was
-/// emited.
+/// emitted.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Recovered<T> {
     /// The error is recoverable and returned a result
@@ -634,7 +658,7 @@ mod private {
 }
 
 /// Extension to the `ReResult<T>` type.
-pub trait ReResultExtension<T>: private::Sealed {
+pub trait ReResultExtension<T>: private::Sealed + Sized {
     /// Maps a `ReResult<T>` to a `ReResult<U>`, both the `Ok(_)` and the
     /// `Err(Recovered::Yes(val, _))`.
     fn re_map<U>(self, f: impl FnOnce(T) -> U) -> ReResult<U>;
@@ -646,6 +670,21 @@ pub trait ReResultExtension<T>: private::Sealed {
     fn re_deref(&self) -> ReResult<&<T as Deref>::Target>
     where
         T: Deref;
+
+    /// Turns `ReResult<T>` into `Result<T, DiagGuaranteed>`, it will return
+    /// `Ok(val)` if it was `Err(Recovered::Yes(val, _))`.
+    fn dere(self) -> Result<T, DiagGuaranteed>;
+
+    /// Like `RES.dere().unwrap_or_else(op)`.
+    fn dere_or(self, op: impl FnOnce() -> T) -> T;
+
+    /// Discards a `ReResult<T>`, use it instead of `_ = reresult;` when:
+    /// you don't care about the `T` value of the ReResult and don't want the
+    /// guarantee.
+    #[inline(always)]
+    fn discard(self) {
+        _ = self;
+    }
 }
 
 impl<T> ReResultExtension<T> for ReResult<T> {
@@ -659,7 +698,7 @@ impl<T> ReResultExtension<T> for ReResult<T> {
 
     fn re_ref(&self) -> ReResult<&T> {
         // NB. we don't use the guarantee of the previous one because it's
-        // behind a reference and DiagGuranteed doesn't implement Copy or Clone.
+        // behind a reference and DiagGuaranteed doesn't implement Copy or Clone.
         match self {
             Ok(val) => Ok(val),
             Err(Recovered::Yes(val, _)) => Err(Recovered::Yes(val, DiagGuaranteed(()))),
@@ -672,6 +711,20 @@ impl<T> ReResultExtension<T> for ReResult<T> {
         T: Deref,
     {
         self.re_ref().re_map(Deref::deref)
+    }
+
+    fn dere(self) -> Result<T, DiagGuaranteed> {
+        match self {
+            Ok(val) | Err(Recovered::Yes(val, _)) => Ok(val),
+            Err(Recovered::No(guarantee)) => Err(guarantee),
+        }
+    }
+
+    fn dere_or(self, op: impl FnOnce() -> T) -> T {
+        match self.dere() {
+            Ok(t) => t,
+            Err(_) => op(),
+        }
     }
 }
 
@@ -694,4 +747,50 @@ macro_rules! tri {
             Err($crate::Recovered::No(guarantee)) => $default,
         }
     };
+}
+
+/// *`E___`* -- feature not implemented
+#[derive(Debug, Clone)]
+pub struct FeatureNotImplemented {
+    /// name of the feature
+    pub feature_name: String,
+    /// text under primary label
+    pub label_text: String,
+    /// the location of the thing not implemented
+    pub primary: Span,
+    /// location of the call to `feature_todo!` macro, because it can be
+    /// different from where we emit it.
+    pub emit_loc: DiagEmitLoc,
+}
+
+impl FeatureNotImplemented {
+    /// Create a new feature not implemented diagnostic error.
+    #[track_caller]
+    pub fn new(
+        name: impl ToString,
+        label_text: impl ToString,
+        primary: Span,
+    ) -> FeatureNotImplemented {
+        FeatureNotImplemented {
+            feature_name: name.to_string(),
+            label_text: label_text.to_string(),
+            primary: primary,
+            emit_loc: DiagEmitLoc::from(Location::caller()),
+        }
+    }
+}
+
+impl Diagnostic for FeatureNotImplemented {
+    fn into_diag(self, dcx: &DiagCtxt) -> Diag {
+        let mut diag = dcx
+            .diag(Level::Error)
+            .with_title(format!(
+                "the feature '{}', is not yet implemented",
+                self.feature_name
+            ))
+            .with_label(Label::primary(self.primary).with_message(self.label_text));
+        diag.emitted_at = self.emit_loc;
+
+        diag
+    }
 }

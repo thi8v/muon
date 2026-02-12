@@ -34,12 +34,13 @@ impl Symbol {
     }
 
     /// Access the underlying string.
+    #[must_use]
     #[inline]
     pub fn as_str(&self) -> &'static str {
         GLOBAL_INTERNER.get_str(*self)
     }
 
-    /// The lenght of the interned string.
+    /// The length of the interned string.
     #[inline]
     pub fn len(&self) -> usize {
         self.as_str().len()
@@ -93,24 +94,24 @@ impl fmt::Display for Symbol {
 
 /// Identifier, the name of the identifier cannot be [`sym::empty`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ident {
+pub struct Identifier {
     pub name: Symbol,
     pub span: Span,
 }
 
-impl Ident {
+impl Identifier {
     /// Create a new identifier.
-    pub fn new(name: Symbol, span: Span) -> Ident {
+    pub fn new(name: Symbol, span: Span) -> Identifier {
         debug_assert!(
-            !name.can_identifier(),
+            name.can_identifier(),
             "cannot create an identifier with a symbol that can't be an identifier."
         );
         Self { name, span }
     }
 
     /// Create a new identifier with a dummy span.
-    pub fn without_span(name: Symbol) -> Ident {
-        Ident::new(name, DUMMY_SP)
+    pub fn without_span(name: Symbol) -> Identifier {
+        Identifier::new(name, DUMMY_SP)
     }
 
     /// Access the underlying string representing it.
@@ -132,6 +133,7 @@ pub fn force_eval_global_interner() {
 }
 
 /// [`Symbol`] interner.
+#[repr(align(64))] // align to the size of a common cache line.
 #[derive(Debug)]
 pub struct Interner {
     /// string -> id
@@ -160,7 +162,7 @@ impl Interner {
         let data = boxcar::Vec::with_capacity(predefined.len() + 1);
 
         // push an invalid string at the 0th index so that we can access the
-        // interned string just by using the id without having to substract 1.
+        // interned string just by using the id without having to subtract 1.
         data.push(Interner::INNER_INVALID);
 
         for (i, sym) in predefined.iter().enumerate() {
@@ -200,6 +202,7 @@ impl Interner {
     }
 
     /// Get an interned string.
+    #[must_use]
     pub fn get_str(&self, sym: Symbol) -> &str {
         self.data[sym.as_usize()]
     }
@@ -207,7 +210,7 @@ impl Interner {
     /// Get an owned slice of a range of symbols.
     ///
     /// N.B: due to how this is implemented it may be **SUPER SLOW** here are
-    /// some recommandations using this method:
+    /// some recommendations using this method:
     /// * If the range exists before creating before we start creating symbols, then
     ///   use this method as early as possible.
     /// * Try to memoize the results, you **DO NOT WANT** to run this function
@@ -226,7 +229,9 @@ impl Interner {
 
 symbols! {
     empty = "",
-    cstr = "cstr",
+
+    // NB. by convention the symbols for keywords start with a capital letter
+    // because we share many keywords with Rust.
 
     // keywords.
     keyword: [
@@ -246,6 +251,7 @@ symbols! {
         Loop = "loop",
         Mut = "mut",
         Null = "null",
+        Pkg = "pkg",
         Pub = "pub",
         Return = "return",
         Self_ = "self",
@@ -284,6 +290,13 @@ symbols! {
         never,
         void,
     ],
+
+    cstr = "cstr",
+    underscore = "_",
+    dummy = "\u{FFFD}",
+    fakepkg = "__pkg\u{FFFD}",
+    C,
+    Muon,
 }
 
 #[cfg(test)]

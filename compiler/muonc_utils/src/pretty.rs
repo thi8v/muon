@@ -5,7 +5,10 @@ use std::{
     io::{self, Write},
 };
 
-use muonc_span::Span;
+use muonc_span::{
+    Span, Spanned,
+    symbol::{Identifier, Symbol},
+};
 
 #[macro_export]
 macro_rules! pretty_struct {
@@ -35,7 +38,7 @@ macro_rules! pretty_struct {
         write!($ctx.out, "}}")?;
 
         $(
-            $ctx.print_loc($loc)?;
+            $ctx.print_span($loc)?;
         )?
     };
     ($ctx:expr, $extra:expr, $name:tt, { $( $field:ident ),* $(,)? } $(,)? $( , $loc:expr )?) => {
@@ -66,18 +69,18 @@ impl<T: PrettyDump<E>, E> AsPrettyDump<E> for T {
 }
 
 /// A list helping struct to dump list-like tree nodes
-pub struct ListDump<'ctx, 'w, E> {
+pub struct ListDump<'ctx, 'w, 'ext, E> {
     ctx: &'ctx mut PrettyCtxt<'w>,
     res: io::Result<()>,
     finished: bool,
     is_empty: bool,
-    extra: E,
+    extra: &'ext E,
     /// if `true` then it will not print a new line between elements
     no_nl: bool,
 }
 
-impl<'ctx, 'w, E> ListDump<'ctx, 'w, E> {
-    pub fn item(mut self, item: impl AsPrettyDump<E>) -> ListDump<'ctx, 'w, E> {
+impl<'ctx, 'w, 'ext, E> ListDump<'ctx, 'w, 'ext, E> {
+    pub fn item(mut self, item: impl AsPrettyDump<E>) -> ListDump<'ctx, 'w, 'ext, E> {
         let item = item.as_pretty_dump();
         if self.finished {
             self.res = Err(io::Error::other("StructDump already finished"));
@@ -103,8 +106,8 @@ impl<'ctx, 'w, E> ListDump<'ctx, 'w, E> {
 
     pub fn items<I: AsPrettyDump<E>>(
         mut self,
-        items: impl Iterator<Item = I>,
-    ) -> ListDump<'ctx, 'w, E> {
+        items: impl IntoIterator<Item = I>,
+    ) -> ListDump<'ctx, 'w, 'ext, E> {
         if self.finished {
             self.res = Err(io::Error::other("ListDump already finished"));
             return self;
@@ -242,11 +245,11 @@ impl<'w> PrettyCtxt<'w> {
     }
 
     /// create a new helper for list-like tree nodes dump
-    pub fn pretty_list<'ctx, E: Clone>(
+    pub fn pretty_list<'ctx, 'ext, E>(
         &'ctx mut self,
         name: Option<String>,
-        extra: &E,
-    ) -> ListDump<'ctx, 'w, E> {
+        extra: &'ext E,
+    ) -> ListDump<'ctx, 'w, 'ext, E> {
         let res = (|| {
             if let Some(name) = name {
                 write!(self.out, "{name} ")?;
@@ -261,13 +264,13 @@ impl<'w> PrettyCtxt<'w> {
             res,
             finished: false,
             is_empty: true,
-            extra: extra.clone(),
+            extra: extra,
             no_nl: false,
         }
     }
 
     /// Print the location attached to a node
-    pub fn print_loc<'a>(&mut self, loc: impl Into<Option<&'a Span>>) -> io::Result<()> {
+    pub fn print_span<'a>(&mut self, loc: impl Into<Option<&'a Span>>) -> io::Result<()> {
         if let Some(loc) = loc.into() {
             write!(self.out, " @ {loc}")
         } else {
@@ -281,7 +284,6 @@ impl<'w> PrettyCtxt<'w> {
         I: IntoIterator<Item = (K, V)>,
         K: Display,
         V: PrettyDump<E>,
-        E: Clone,
     {
         let entries = entries.into_iter();
 
@@ -342,13 +344,13 @@ pub trait PrettyDump<E> {
     }
 }
 
-impl<T: PrettyDump<E>, const N: usize, E: Clone> PrettyDump<E> for [T; N] {
+impl<T: PrettyDump<E>, const N: usize, E> PrettyDump<E> for [T; N] {
     fn try_dump(&self, ctx: &mut PrettyCtxt, e: &E) -> io::Result<()> {
         (&self[..]).try_dump(ctx, e)
     }
 }
 
-impl<T: PrettyDump<E>, E: Clone> PrettyDump<E> for &[T] {
+impl<T: PrettyDump<E>, E> PrettyDump<E> for &[T] {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         ctx.pretty_list(None, extra).items(self.iter()).finish()?;
 
@@ -356,7 +358,7 @@ impl<T: PrettyDump<E>, E: Clone> PrettyDump<E> for &[T] {
     }
 }
 
-impl<'ctx, 'w, E> PrettyDump<E> for ListDump<'ctx, 'w, E> {
+impl<'ctx, 'w, 'ext, E> PrettyDump<E> for ListDump<'ctx, 'w, 'ext, E> {
     fn try_dump(&self, _: &mut PrettyCtxt, _: &E) -> io::Result<()> {
         assert!(self.finished);
         // we already printed everything
@@ -392,10 +394,20 @@ impl<T: PrettyDump<E>, E> PrettyDump<E> for Option<T> {
     }
 }
 
-impl<T: PrettyDump<E>, E> PrettyDump<E> for (T, &Option<Span>) {
+impl<E, T: PrettyDump<E>> PrettyDump<E> for Spanned<T> {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
-        self.0.try_dump(ctx, extra)?;
-        ctx.print_loc(self.1)?;
+        self.node.try_dump(ctx, extra)?;
+        ctx.print_span(&self.span)?;
+
+        Ok(())
+    }
+}
+
+impl<E> PrettyDump<E> for Identifier {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
+        self.name.try_dump(ctx, extra)?;
+        ctx.print_span(&self.span)?;
+
         Ok(())
     }
 }
@@ -406,7 +418,7 @@ impl<T: PrettyDump<E>, E> PrettyDump<E> for Box<T> {
     }
 }
 
-impl<T: PrettyDump<E>, E: Clone> PrettyDump<E> for Vec<T> {
+impl<T: PrettyDump<E>, E> PrettyDump<E> for Vec<T> {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         <&[T]>::try_dump(&self.as_slice(), ctx, extra)
     }
@@ -432,7 +444,6 @@ macro_rules! impl_pdump {
 }
 
 impl_pdump! {
-    Span,
     bool,
     char,
     &str,
@@ -450,6 +461,8 @@ impl_pdump! {
     isize,
     f32,
     f64,
+    Symbol,
+    Span,
 }
 
 impl<E> PrettyDump<E> for () {
