@@ -57,7 +57,7 @@ impl<E> PrettyDump<E> for Mutability {
 }
 
 /// Binary operation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinOp {
     /// addition
     Add,
@@ -179,7 +179,7 @@ impl<E> PrettyDump<E> for BinOp {
     }
 }
 /// Unary Operations
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnOp {
     // left unary operator
     /// `- expression`
@@ -245,9 +245,9 @@ impl<E> PrettyDump<E> for UnOp {
 /// A 'Path' is a name in Muon, like `pkg`, `hello`, `core::panic`, ..
 ///
 /// It is composed of segments of path, identifiers or pkg.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Path {
-    segments: Vec<PathSegment>,
+    pub segments: Vec<PathSegment>,
 }
 
 impl Path {
@@ -318,24 +318,16 @@ impl Path {
     ///
     /// This function panics if you push a [`PathSegment::Pkg`] if it's not the
     /// first segment of the path.
-    pub fn push_seg(&mut self, segment: impl Into<PathSegment>) {
+    pub fn push(&mut self, segment: impl Into<PathSegment>) {
         let seg = segment.into();
 
-        if !self.is_empty() && seg == PathSegment::Pkg {
+        if !self.is_empty()
+            && let PathSegment::Pkg(_) = seg
+        {
             panic!("pushed a 'pkg' segment not as the first segment of a path")
         }
 
         self.segments.push(seg)
-    }
-
-    /// Push an ident segment
-    pub fn push(&mut self, ident: Symbol) {
-        if ident == sym::Pkg && self.is_empty() {
-            self.segments.push(PathSegment::Pkg);
-
-            return;
-        }
-        self.segments.push(PathSegment::Ident(ident));
     }
 
     /// Pops the last member of the path and returns it
@@ -346,7 +338,7 @@ impl Path {
     /// Is this path the root path? returns true if the path is equal to `pkg`,
     /// false otherwise.
     pub fn is_root(&self) -> bool {
-        self.segments == [PathSegment::Pkg]
+        matches!(self.segments.as_slice(), [PathSegment::Pkg(_), ..])
     }
 
     /// Append a path to this path
@@ -361,32 +353,17 @@ impl Path {
 
     /// Does the path starts with a [`PathSegment::Pkg`]?
     pub fn starts_with_pkg(&self) -> bool {
-        matches!(self.first(), Some(PathSegment::Pkg))
+        matches!(self.first(), Some(PathSegment::Pkg(_)))
     }
 
     /// Returns `true` if self == `_`
     pub fn is_underscore(&self) -> bool {
-        self.len() == 1 && self.segments[0].is_ident_and(|id| id == sym::underscore)
+        self.len() == 1 && self.segments[0].is_ident_and(|id| id.name == sym::underscore)
     }
 
     /// Get the `i`th segment of the path.
     pub fn get(&self, i: usize) -> Option<&PathSegment> {
         self.segments.get(i)
-    }
-}
-
-impl<S: AsRef<str>> FromIterator<S> for Path {
-    /// Creates a new path from an iterator of strings, if the first thing is
-    /// the string `pkg` it will push an pkg segment
-    fn from_iter<T: IntoIterator<Item = S>>(iter: T) -> Self {
-        let mut path = Path::new();
-
-        for seg in iter {
-            let seg_s = seg.as_ref();
-            path.push(Symbol::intern(seg_s));
-        }
-
-        path
     }
 }
 
@@ -421,25 +398,33 @@ impl<E> PrettyDump<E> for Path {
 }
 
 /// A segment of a path, `pkg` or an identifier
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PathSegment {
     /// Identifier segment like `abc`
-    Ident(Symbol),
+    Ident(Identifier),
     /// Package starting segment `pkg`, e.g: `pkg::hello:world`.
     ///
     /// # Note
     ///
     /// This segment is only valid as the first segment of a [Path]
-    Pkg,
+    Pkg(Span),
 }
 
 impl PathSegment {
     /// Returns `true` if `self` is `Ident(id)` and the value inside matches a
     /// predicate `f`.
-    pub fn is_ident_and(&self, f: impl FnOnce(Symbol) -> bool) -> bool {
+    pub fn is_ident_and(&self, f: impl FnOnce(Identifier) -> bool) -> bool {
         match self {
             Self::Ident(id) => f(*id),
-            Self::Pkg => false,
+            Self::Pkg(_) => false,
+        }
+    }
+
+    /// Returns the span of the segment.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Ident(ident) => ident.span,
+            Self::Pkg(span) => *span,
         }
     }
 }
@@ -447,15 +432,15 @@ impl PathSegment {
 impl Display for PathSegment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ident(seg) => write!(f, "{seg}"),
-            Self::Pkg => write!(f, "pkg"),
+            Self::Ident(seg) => write!(f, "{}", seg.name),
+            Self::Pkg(_) => write!(f, "pkg"),
         }
     }
 }
 
-impl From<Symbol> for PathSegment {
-    fn from(value: Symbol) -> Self {
-        PathSegment::Ident(value)
+impl From<Identifier> for PathSegment {
+    fn from(ident: Identifier) -> Self {
+        PathSegment::Ident(ident)
     }
 }
 
@@ -507,14 +492,140 @@ pub enum ItemContainer {
     ExternBlock,
 }
 
-/// Kind of Item
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ItemKind {
-    Fundef,
-    Fundecl,
-    GlobalDef,
-    GlobalUninit,
-    Module,
-    ExternBlock,
-    Directive,
+/// Muon's primitive types
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrimTy {
+    Int(IntTy),
+    Uint(UintTy),
+    Float(FloatTy),
+    Str,
+    Bool,
+    Char,
+    Never,
+    Void,
+}
+
+impl PrimTy {
+    /// Get the primitive type from it's symbol
+    pub const fn from_symbol(sym: Symbol) -> Option<PrimTy> {
+        match sym {
+            sym::isz => Some(PrimTy::Int(IntTy::Isz)),
+            sym::i128 => Some(PrimTy::Int(IntTy::I128)),
+            sym::i64 => Some(PrimTy::Int(IntTy::I64)),
+            sym::i32 => Some(PrimTy::Int(IntTy::I32)),
+            sym::i16 => Some(PrimTy::Int(IntTy::I16)),
+            sym::i8 => Some(PrimTy::Int(IntTy::I8)),
+            sym::usz => Some(PrimTy::Uint(UintTy::Usz)),
+            sym::u128 => Some(PrimTy::Uint(UintTy::U128)),
+            sym::u64 => Some(PrimTy::Uint(UintTy::U64)),
+            sym::u32 => Some(PrimTy::Uint(UintTy::U32)),
+            sym::u16 => Some(PrimTy::Uint(UintTy::U16)),
+            sym::u8 => Some(PrimTy::Uint(UintTy::U8)),
+            sym::f16 => Some(PrimTy::Float(FloatTy::F16)),
+            sym::f32 => Some(PrimTy::Float(FloatTy::F32)),
+            sym::f64 => Some(PrimTy::Float(FloatTy::F64)),
+            sym::f128 => Some(PrimTy::Float(FloatTy::F128)),
+            sym::bool => Some(PrimTy::Bool),
+            sym::str => Some(PrimTy::Str),
+            sym::char => Some(PrimTy::Char),
+            sym::never => Some(PrimTy::Never),
+            sym::void => Some(PrimTy::Void),
+            _ => None,
+        }
+    }
+
+    /// Get the symbol corresponding to the primitive type.
+    pub const fn to_symbol(&self) -> Symbol {
+        match self {
+            PrimTy::Int(IntTy::Isz) => sym::isz,
+            PrimTy::Int(IntTy::I128) => sym::i128,
+            PrimTy::Int(IntTy::I64) => sym::i64,
+            PrimTy::Int(IntTy::I32) => sym::i32,
+            PrimTy::Int(IntTy::I16) => sym::i16,
+            PrimTy::Int(IntTy::I8) => sym::i8,
+            PrimTy::Uint(UintTy::Usz) => sym::usz,
+            PrimTy::Uint(UintTy::U128) => sym::u128,
+            PrimTy::Uint(UintTy::U64) => sym::u64,
+            PrimTy::Uint(UintTy::U32) => sym::u32,
+            PrimTy::Uint(UintTy::U16) => sym::u16,
+            PrimTy::Uint(UintTy::U8) => sym::u8,
+            PrimTy::Float(FloatTy::F16) => sym::f16,
+            PrimTy::Float(FloatTy::F32) => sym::f32,
+            PrimTy::Float(FloatTy::F64) => sym::f64,
+            PrimTy::Float(FloatTy::F128) => sym::f128,
+            PrimTy::Bool => sym::bool,
+            PrimTy::Str => sym::str,
+            PrimTy::Char => sym::char,
+            PrimTy::Never => sym::never,
+            PrimTy::Void => sym::void,
+        }
+    }
+}
+
+/// Muon signed integer types
+#[derive(Debug, Clone, PartialEq)]
+pub enum IntTy {
+    Isz,
+    I128,
+    I64,
+    I32,
+    I16,
+    I8,
+}
+
+/// Muon unsigned integer types
+#[derive(Debug, Clone, PartialEq)]
+pub enum UintTy {
+    Usz,
+    U128,
+    U64,
+    U32,
+    U16,
+    U8,
+}
+
+/// Muon float types
+#[derive(Debug, Clone, PartialEq)]
+pub enum FloatTy {
+    F128,
+    F64,
+    F32,
+    F16,
+}
+
+/// Visibility
+///
+/// NB: `T` is used to add a potential Span to the public variant of this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility<T = ()> {
+    Public(T),
+    Private,
+}
+
+impl<T> Visibility<T> {
+    /// Turns a `Visibility<T>` into a `Visibility<()>`.
+    pub fn simplify(self) -> Visibility<()> {
+        match self {
+            Visibility::Public(_) => Visibility::Public(()),
+            Visibility::Private => Visibility::Private,
+        }
+    }
+
+    /// Get the value inside of the public variant
+    pub fn as_val(&self) -> Option<&T> {
+        if let Self::Public(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+impl<E> PrettyDump<E> for Visibility {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, _: &E) -> io::Result<()> {
+        match self {
+            Visibility::Public(()) => write!(ctx.out, "pub"),
+            Visibility::Private => write!(ctx.out, "private"),
+        }
+    }
 }

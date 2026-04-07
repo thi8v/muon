@@ -1,14 +1,13 @@
 [package]
-name = "muonc"
+name = "muonc_hir"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
+muonc_entity = { workspace = true }
 muonc_errors = { workspace = true }
-muonc_hir = { workspace = true }
 muonc_lexer = { workspace = true }
-muonc_macros = { workspace = true }
 muonc_middle = { workspace = true }
 muonc_parser = { workspace = true }
 muonc_span = { workspace = true }
@@ -16,11 +15,4 @@ muonc_token = { workspace = true }
 muonc_utils = { workspace = true }
 
 # other dependencies
-clap = { workspace = true }
-shadow-rs = "1.4"
-termcolor = { workspace = true }
-termimad = "0.34"
-thiserror = { workspace = true }
-
-[build-dependencies]
-shadow-rs = "1.4"
+indexmap = { workspace = true }

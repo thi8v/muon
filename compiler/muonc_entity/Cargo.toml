@@ -1,12 +1,10 @@
 [package]
-name = "muonc_utils"
+name = "muonc_entity"
 version.workspace = true
 license.workspace = true
 edition.workspace = true
 
 [dependencies]
-muonc_entity = { workspace = true }
-muonc_span = { workspace = true }
 
 # other dependencies
-strsim = "0.11"
+indexmap = { workspace = true }

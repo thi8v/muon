@@ -94,6 +94,20 @@ impl TokenStream<TsBuilding> {
 }
 
 impl TokenStream<TsSealed> {
+    /// Create a new sealed token stream
+    pub fn new_sealed() -> TokenStream<TsSealed> {
+        let eof = Token {
+            tt: TokenType::Eof,
+            span: DUMMY_SP,
+        };
+
+        TokenStream {
+            tokens: vec![eof.clone()],
+            eof: Some(eof),
+            status: TsSealed,
+        }
+    }
+
     /// Get the token a the index `idx`, always returns the Eof token if `idx`
     /// is out of bounds of the stream.
     #[track_caller]

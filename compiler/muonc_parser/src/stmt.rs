@@ -16,6 +16,10 @@ pub enum StmtKind {
     ///
     /// `"let" "mut"? ident (":" type)? ( "=" expr )? ";"`
     BindingDef(Mutability, Identifier, Option<Type>, Option<Expr>),
+    /// Directive
+    ///
+    /// `directive`
+    Directive(Directive),
     /// Expression statement.
     ///
     /// `expr_with_block ";"?` or
@@ -47,6 +51,7 @@ impl Parser {
     pub fn parse_stmt(&mut self, in_block: bool) -> ReResult<Stmt> {
         match self.token.tt {
             Kw(Keyword::Let) => self.parse_binding_stmt(),
+            Kw(Keyword::Pub) | Pound => self.parse_directive_stmt(),
             _ => {
                 // didn't recognized a statement, must be an expression statement
                 self.parse_expr_stmt(in_block)
@@ -117,6 +122,18 @@ impl Parser {
         })
     }
 
+    /// Parses a directive statement
+    pub fn parse_directive_stmt(&mut self) -> ReResult<Stmt> {
+        let vis = self.parse_vis();
+
+        let directive = tri!(self.parse_directive(vis));
+
+        Ok(Stmt {
+            span: directive.span(),
+            kind: StmtKind::Directive(directive),
+        })
+    }
+
     /// Parses a block.
     pub fn parse_block(&mut self) -> ReResult<Block> {
         let mut stmts: Vec<Stmt> = Vec::new();
@@ -143,7 +160,7 @@ impl Parser {
             let is_expr = stmt.kind.is_expr();
 
             match (curly, is_expr, self.expr_semi_diag.take()) {
-                (true, true, diag) => {
+                (true, true, _) => {
                     // ... expr }
                     //         ^ we are here so:
                     let Stmt {
@@ -153,7 +170,6 @@ impl Parser {
                     else {
                         unreachable!()
                     };
-                    debug_assert!(diag.is_some());
 
                     tail = Some(expr);
                     break;

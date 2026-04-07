@@ -3,7 +3,9 @@ resolver = "3"
 members = [
   # compiler
   "compiler/muonc",
+  "compiler/muonc_entity",
   "compiler/muonc_errors",
+  "compiler/muonc_hir",
   "compiler/muonc_lexer",
   "compiler/muonc_macros",
   "compiler/muonc_middle",
@@ -19,7 +21,9 @@ license = "MIT"
 edition = "2024"
 
 [workspace.dependencies]
+muonc_entity = { path = "compiler/muonc_entity" }
 muonc_errors = { path = "compiler/muonc_errors" }
+muonc_hir = { path = "compiler/muonc_hir" }
 muonc_lexer = { path = "compiler/muonc_lexer" }
 muonc_macros = { path = "compiler/muonc_macros" }
 muonc_middle = { path = "compiler/muonc_middle" }
@@ -32,6 +36,7 @@ muonc_utils = { path = "compiler/muonc_utils" }
 bitflags = "2.10"
 boxcar = "0.2"
 clap = { version = "4.5", features = ["derive"] }
+enum-ordinalize = "4.3"
 indexmap = "2.13"
 thiserror = "2.0"
 termcolor = "1.4"

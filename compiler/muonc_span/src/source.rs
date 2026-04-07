@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{Bsz, FileId};
+use crate::{Bsz, FileId, Span, span};
 
 /// A source file, mapped in [`SourceMap`].
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub struct SourceFile {
     pub path: PathBuf,
     pub src: Arc<String>,
     pub fid: FileId,
+    pub len: Bsz,
 }
 
 impl SourceFile {
@@ -90,6 +91,7 @@ impl SourceMap {
 
         let idx = self.files.push_with(|idx| SourceFile {
             path: path.to_path_buf(),
+            len: Bsz::from(src.len()),
             src,
             fid: FileId::new(idx as u32),
         });
@@ -129,5 +131,17 @@ impl SourceMap {
     /// Returns true if the fid exists in the source map.
     pub fn exists(&self, fid: FileId) -> bool {
         self.files.get(fid.as_usize()).is_some()
+    }
+
+    /// Get a reference to the file loader.
+    pub fn file_loader(&self) -> &dyn FileLoader {
+        &*self.loader
+    }
+
+    /// Get the span of a file.
+    pub fn file_span(&self, fid: FileId) -> Span {
+        let len = self.file_of(fid).len;
+
+        span(0, len, fid)
     }
 }

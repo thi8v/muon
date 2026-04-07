@@ -9,11 +9,11 @@ use muonc_utils::{
 };
 
 use crate::{
-    ast::*,
+    ast::{Extern, Fundecl, Fundef, Globdecl, Globdef, Import, ModDecl, ModDef, *},
     expr::{LabelDef, LabelUse},
 };
 
-impl<E> PrettyDump<E> for Module {
+impl<E> PrettyDump<E> for Mod {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         ctx.pretty_list(None, extra)
             .items(self.items.iter())
@@ -24,7 +24,13 @@ impl<E> PrettyDump<E> for Module {
 impl<E> PrettyDump<E> for Item {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
-            Item::Fundef(vis, name, sig, block, span) => {
+            Item::Fundef(Fundef {
+                vis,
+                name,
+                sig,
+                block,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -40,7 +46,12 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Fundecl(vis, name, sig, span) => {
+            Item::Fundecl(Fundecl {
+                vis,
+                name,
+                sig,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -55,7 +66,14 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Globdef(vis, mutability, name, typ, expr, span) => {
+            Item::Globdef(Globdef {
+                vis,
+                mutability,
+                name,
+                typ,
+                expr,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -72,7 +90,13 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Globdecl(vis, mutability, name, typ, span) => {
+            Item::Globdecl(Globdecl {
+                vis,
+                mutability,
+                name,
+                typ,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -88,7 +112,7 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Extern(abi, items, span) => {
+            Item::Extern(Extern { abi, items, span }) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -110,12 +134,13 @@ impl<E> PrettyDump<E> for Item {
 impl<E> PrettyDump<E> for Directive {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
-            Directive::ModDecl(name, span) => {
+            Directive::ModDecl(ModDecl { vis, name, span }) => {
                 pretty_struct! {
                     ctx,
                     extra,
-                    "ModDecl",
+                    "Directive::ModDecl",
                     {
+                        vis,
                         name,
                     },
                     span
@@ -123,12 +148,18 @@ impl<E> PrettyDump<E> for Directive {
 
                 Ok(())
             }
-            Directive::ModDef(name, Module { items, fid: _ }, span) => {
+            Directive::ModDef(ModDef {
+                vis,
+                name,
+                module: Mod { items, span: _ },
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
-                    "ModDef",
+                    "Directive::ModDef",
                     {
+                        vis,
                         name,
                         items,
                     },
@@ -137,12 +168,18 @@ impl<E> PrettyDump<E> for Directive {
 
                 Ok(())
             }
-            Directive::Import(path, alias, span) => {
+            Directive::Import(Import {
+                vis,
+                path,
+                alias,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
-                    "Import",
+                    "Directive::Import",
                     {
+                        vis,
                         path,
                         alias,
                     },
@@ -151,15 +188,6 @@ impl<E> PrettyDump<E> for Directive {
 
                 Ok(())
             }
-        }
-    }
-}
-
-impl<E> PrettyDump<E> for Visibility {
-    fn try_dump(&self, ctx: &mut PrettyCtxt, _: &E) -> io::Result<()> {
-        match self {
-            Visibility::Public(()) => write!(ctx.out, "pub"),
-            Visibility::Private => write!(ctx.out, "private"),
         }
     }
 }
@@ -189,7 +217,7 @@ impl<E> PrettyDump<E> for Block {
 
         impl<'ast, E> PrettyDump<E> for Tail<'ast> {
             fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
-                write!(ctx.out, "@last_expr: ")?;
+                write!(ctx.out, "@tail: ")?;
                 self.0.try_dump(ctx, extra)?;
 
                 Ok(())
@@ -198,7 +226,7 @@ impl<E> PrettyDump<E> for Block {
 
         let last = Tail(&self.tail);
 
-        ctx.pretty_list(Some("Block".to_string()), extra)
+        ctx.pretty_list(Some("Block"), extra)
             .items(self.stmts.iter())
             .item(last)
             .finish()?;
@@ -472,6 +500,7 @@ impl<E> PrettyDump<E> for StmtKind {
 
                 Ok(())
             }
+            StmtKind::Directive(directive) => directive.try_dump(ctx, extra),
             StmtKind::Expr(expr) => expr.try_dump(ctx, extra),
         }
     }

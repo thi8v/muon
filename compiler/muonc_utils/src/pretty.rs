@@ -1,10 +1,11 @@
 //! Pretty tree printer, used for printing the AST, the DSIR, and the HTIR
 
 use std::{
-    fmt::{self, Display},
+    fmt,
     io::{self, Write},
 };
 
+use muonc_entity::{AnyId, Entity, EntitySet, Opt};
 use muonc_span::{
     Span, Spanned,
     symbol::{Identifier, Symbol},
@@ -90,7 +91,7 @@ impl<'ctx, 'w, 'ext, E> ListDump<'ctx, 'w, 'ext, E> {
             self.res = (|| {
                 writeln!(self.ctx.out)?;
                 self.ctx.write_indent()?;
-                item.try_dump(self.ctx, &self.extra)?;
+                item.try_dump(self.ctx, self.extra)?;
                 write!(self.ctx.out, ",")?;
                 if !self.no_nl {
                     writeln!(self.ctx.out)?;
@@ -120,7 +121,7 @@ impl<'ctx, 'w, 'ext, E> ListDump<'ctx, 'w, 'ext, E> {
 
                     writeln!(self.ctx.out)?;
                     self.ctx.write_indent()?;
-                    item.try_dump(self.ctx, &self.extra)?;
+                    item.try_dump(self.ctx, self.extra)?;
                     write!(self.ctx.out, ",")?;
                     if !self.no_nl {
                         writeln!(self.ctx.out)?;
@@ -247,7 +248,7 @@ impl<'w> PrettyCtxt<'w> {
     /// create a new helper for list-like tree nodes dump
     pub fn pretty_list<'ctx, 'ext, E>(
         &'ctx mut self,
-        name: Option<String>,
+        name: Option<&str>,
         extra: &'ext E,
     ) -> ListDump<'ctx, 'w, 'ext, E> {
         let res = (|| {
@@ -264,7 +265,7 @@ impl<'w> PrettyCtxt<'w> {
             res,
             finished: false,
             is_empty: true,
-            extra: extra,
+            extra,
             no_nl: false,
         }
     }
@@ -282,7 +283,7 @@ impl<'w> PrettyCtxt<'w> {
     pub fn pretty_map<I, K, V, E>(&mut self, entries: I, extra: &E) -> io::Result<()>
     where
         I: IntoIterator<Item = (K, V)>,
-        K: Display,
+        K: PrettyDump<E>,
         V: PrettyDump<E>,
     {
         let entries = entries.into_iter();
@@ -296,7 +297,8 @@ impl<'w> PrettyCtxt<'w> {
 
             writeln!(self.out)?;
             self.write_indent()?;
-            write!(self.out, "{k}: ")?;
+            k.try_dump(self, extra)?;
+            write!(self.out, ": ")?;
             v.try_dump(self, extra)?;
             write!(self.out, ",")?;
         }
@@ -463,11 +465,27 @@ impl_pdump! {
     f64,
     Symbol,
     Span,
+    AnyId,
 }
 
 impl<E> PrettyDump<E> for () {
     fn try_dump(&self, _: &mut PrettyCtxt, _: &E) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl<Ex: Clone, E: Entity + PrettyDump<Ex>> PrettyDump<Ex> for EntitySet<E> {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &Ex) -> io::Result<()> {
+        ctx.pretty_list(None, extra)
+            .disable_nl()
+            .items(self.iter())
+            .finish()
+    }
+}
+
+impl<E: PrettyDump<Ex> + Entity, Ex> PrettyDump<Ex> for Opt<E> {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &Ex) -> io::Result<()> {
+        self.expand().try_dump(ctx, extra)
     }
 }
 

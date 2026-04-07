@@ -12,5 +12,5 @@ muonc_utils = { workspace = true }
 # other dependencies
 annotate-snippets = "0.12"
 bitflags = { workspace = true }
+enum-ordinalize = { workspace = true }
 indexmap = { workspace = true }
-

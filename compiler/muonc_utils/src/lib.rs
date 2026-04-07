@@ -227,32 +227,42 @@ pub fn fast_digit_length<const RADIX: u32>(n: u128) -> u32 {
 /// Adaptive threshold based on word length
 pub fn adaptive_threshold(len: usize) -> f64 {
     match len {
-        0..=3 => 0.9,
-        4..=6 => 0.8,
-        7..=12 => 0.7,
-        _ => 0.6,
+        0..=3 => 0.75,
+        4..=6 => 0.65,
+        7..=12 => 0.55,
+        _ => 0.50,
     }
 }
 
 /// Suggests the closest match from a dictionary to a given word.
 ///
 /// NB: this function is internally backed by Sørensen-Dice coefficient, nothing
-/// is returned if the maximun score isn't above [`adaptive_threshold`].
+/// is returned if the maximum score isn't above [`adaptive_threshold`].
 pub fn suggest_similar(
     query: Symbol,
     dictionary: impl IntoIterator<Item = Symbol>,
 ) -> Option<Symbol> {
+    suggest_similar_with(query, dictionary).map(|(word, _, _)| word)
+}
+
+/// Like `suggest_similar` but returns the index where it was found (the usize)
+/// useful only for slices i guess and the score it got (the f64).
+pub fn suggest_similar_with(
+    query: Symbol,
+    dictionary: impl IntoIterator<Item = Symbol>,
+) -> Option<(Symbol, usize, f64)> {
     let len = query.as_str().chars().count();
     let threshold = adaptive_threshold(len);
 
     dictionary
         .into_iter()
-        .map(|word| {
+        .enumerate()
+        .map_while(|(idx, word)| {
             let score = sorensen_dice(query.as_str(), word.as_str());
 
-            (word, score)
+            let res = (word, idx, score);
+
+            (score >= threshold).then_some(res)
         })
-        .filter(|(_, score)| *score >= threshold)
-        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal))
-        .map(|(word, _)| word)
+        .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(Ordering::Equal))
 }

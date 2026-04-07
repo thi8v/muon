@@ -135,7 +135,7 @@ impl ExprKind {
     }
 }
 
-/// The precedence table of Lun
+/// The precedence table of Muon
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     // `__First__` is a special precedence value, it is used to exit out of the

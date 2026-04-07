@@ -1,11 +1,12 @@
 //! Source position and related helper functions in the Muon Compiler.
 
 use std::{
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     num::TryFromIntError,
     ops::{Add, AddAssign, BitOr, Range, Sub},
 };
 
+pub mod def_id;
 pub mod prelude;
 pub mod source;
 pub mod symbol;
@@ -14,7 +15,7 @@ pub mod symbol;
 /// is guaranteed to be exactly like a `u32` but it carries with it more type
 /// information.
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Bsz(pub u32);
 
 impl Bsz {
@@ -179,6 +180,12 @@ impl Display for Bsz {
     }
 }
 
+impl Debug for Bsz {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Location of something in a file.
 ///
 /// # Note
@@ -293,8 +300,14 @@ impl Default for Span {
 }
 
 /// A file id, used to represent, which file we are talking about
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FileId(u32);
+
+impl fmt::Debug for FileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FileId({})", self.0)
+    }
+}
 
 impl FileId {
     /// Note this, file id always refers to the root of the package.
@@ -318,7 +331,7 @@ impl FileId {
 }
 
 /// Something that can have a span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Spanned<T> {
     pub node: T,
     pub span: Span,

@@ -14,6 +14,26 @@ use muonc_span::{
 
 use crate::target::TargetTriple;
 
+macro_rules! elapsed_fn {
+    (@timings $fn:ident, $name:ident) => {
+        #[doc = concat!("Set the elapsed time of `", stringify!($name), "`.")]
+        pub fn $fn(&mut self) {
+            self.$name = self.last_instant.elapsed();
+            self.last_instant = Instant::now();
+        }
+    };
+    (@session $fn:ident, $name:ident) => {
+        #[doc = concat!("Set the elapsed time of `", stringify!($name), "`.")]
+        pub fn $fn(&self) {
+            let instant = Instant::now();
+            let mut timings = self.timings.lock().expect("unable to lock the timings");
+
+            timings.$name = instant - timings.last_instant;
+            timings.last_instant = instant;
+        }
+    };
+}
+
 /// Session of a compilation.
 #[derive(Debug)]
 pub struct Session {
@@ -55,32 +75,10 @@ impl Session {
         timings.add_parser(dt);
     }
 
-    /// Set the elapsed time of the `setup`.
-    pub fn elapsed_setup(&self) {
-        let instant = Instant::now();
-        let mut timings = self.timings.lock().expect("unable to lock the timings");
-
-        timings.setup = instant - timings.last_instant;
-        timings.last_instant = instant;
-    }
-
-    /// Set the elapsed time of the `lexer`.
-    pub fn elapsed_lexer(&self) {
-        let instant = Instant::now();
-        let mut timings = self.timings.lock().expect("unable to lock the timings");
-
-        timings.lexer = instant - timings.last_instant;
-        timings.last_instant = instant;
-    }
-
-    /// Set the elapsed time of the `parser`.
-    pub fn elapsed_parser(&self) {
-        let instant = Instant::now();
-        let mut timings = self.timings.lock().expect("unable to lock the timings");
-
-        timings.parser = instant - timings.last_instant;
-        timings.last_instant = instant;
-    }
+    elapsed_fn!(@session elapsed_setup, setup);
+    elapsed_fn!(@session elapsed_lexer, lexer);
+    elapsed_fn!(@session elapsed_parser, parser);
+    elapsed_fn!(@session elapsed_hir, hir);
 
     /// Emit the summary diagnostic if any.
     pub fn emit_summary(&self) {
@@ -93,7 +91,7 @@ impl Session {
                 Level::Info
             };
 
-            let (codes, more) = self.dcx.err_codes();
+            let (codes, more, x) = self.dcx.first_codes();
 
             let dots = if more { " ..." } else { "" };
 
@@ -103,14 +101,14 @@ impl Session {
                 diag
             } else {
                 diag.with_note(format!(
-                    "Some errors have detailed documentation: {}{}, try 'muonc --explain {}'",
+                    "Some {x}s have detailed documentation: {}{}, try 'muonc --explain {}'",
                     codes
                         .iter()
                         .map(|code| code.to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
                     dots,
-                    codes.first().expect("have at least one code??")
+                    codes.first().expect("have at least one code??"),
                 ))
             };
 
@@ -159,18 +157,10 @@ pub struct Timings {
     lexer: Duration,
     /// Duration of paring.
     parser: Duration,
+    /// Duration of the HIR stage.
+    hir: Duration,
     /// Total duration.
     total: Duration,
-}
-
-macro_rules! elapsed_fn {
-    ($fn:ident, $name:ident) => {
-        #[doc = concat!("Set the elapsed time of `", stringify!($name), "`.")]
-        pub fn $fn(&mut self) {
-            self.$name = self.last_instant.elapsed();
-            self.last_instant = Instant::now();
-        }
-    };
 }
 
 impl Timings {
@@ -182,17 +172,28 @@ impl Timings {
             setup: Duration::ZERO,
             lexer: Duration::ZERO,
             parser: Duration::ZERO,
+            hir: Duration::ZERO,
             total: Duration::ZERO,
         }
     }
 
-    elapsed_fn!(elapsed_setup, setup);
-    elapsed_fn!(elapsed_lexer, lexer);
-    elapsed_fn!(elapsed_parser, parser);
+    elapsed_fn!(@timings elapsed_setup, setup);
+    elapsed_fn!(@timings elapsed_lexer, lexer);
+    elapsed_fn!(@timings elapsed_parser, parser);
+    elapsed_fn!(@timings elapsed_hir, hir);
 
     /// Compute the total time.
     pub fn set_total(&mut self) {
-        self.total = self.setup + self.lexer + self.parser;
+        let Timings {
+            last_instant: _,
+            setup,
+            lexer,
+            parser,
+            hir,
+            ref mut total,
+        } = *self;
+
+        *total = setup + lexer + parser + hir;
     }
 
     /// Add `dt` duration to the `lexer` timings.
@@ -216,6 +217,7 @@ impl fmt::Display for Timings {
             setup,
             lexer,
             parser,
+            hir,
             total,
         } = self.clone();
 
@@ -223,6 +225,7 @@ impl fmt::Display for Timings {
         writeln!(f, "   setup: {}", humantime::format_duration(setup))?;
         writeln!(f, "   lexer: {}", humantime::format_duration(lexer))?;
         writeln!(f, "  parser: {}", humantime::format_duration(parser))?;
+        writeln!(f, "     hir: {}", humantime::format_duration(hir))?;
         writeln!(f, "=  Total: {}", humantime::format_duration(total))?;
 
         Ok(())

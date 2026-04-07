@@ -8,77 +8,98 @@ use super::*;
 
 /// Muon module, a collection of [`Item`]s that may be in a file or in a module
 /// directive.
-#[derive(Debug, Clone)]
-pub struct Module {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mod {
+    /// The contained items.
     pub items: Vec<Item>,
-    pub fid: FileId,
+    /// Inner span of the module, the span from the first token to the last
+    /// token inside of the module (does not include the `{` `}` for `ModDef`).
+    pub span: Span,
 }
 
-/// Visibility
+/// Function definition
 ///
-/// NB: `T` is used to add a potential Span to the public variant of this enum.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Visibility<T = ()> {
-    Public(T),
-    Private,
+/// *NB: the first span is the span from `fun` to `)` and the last span is
+/// the span of the entire item.*
+///
+/// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fundef {
+    pub vis: Visibility,
+    pub name: Identifier,
+    pub sig: Sig,
+    pub block: Block,
+    pub span: Span,
 }
 
-impl<T> Visibility<T> {
-    /// Turns a `Visibility<T>` into a `Visibility` with a `T = ()` implied.
-    pub fn simplify(self) -> Visibility<()> {
-        match self {
-            Visibility::Public(_) => Visibility::Public(()),
-            Visibility::Private => Visibility::Private,
-        }
-    }
+/// Function declaration
+///
+/// *NB: the first span is the span from `fun` to `)` and the last span is
+/// the span of the entire item.*
+///
+/// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fundecl {
+    pub vis: Visibility,
+    pub name: Identifier,
+    pub sig: Sig,
+    pub span: Span,
+}
 
-    /// Get the value inside of the public variant
-    pub fn as_val(&self) -> Option<&T> {
-        if let Self::Public(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
+/// Global definition
+///
+/// `vis? "mut"? ident (":" type)? "=" expr ";"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Globdef {
+    pub vis: Visibility,
+    pub mutability: Mutability,
+    pub name: Identifier,
+    pub typ: Option<Type>,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// Global declaration
+///
+/// `vis? "mut"? ident ":" type ";"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Globdecl {
+    pub vis: Visibility,
+    pub mutability: Mutability,
+    pub name: Identifier,
+    pub typ: Type,
+    pub span: Span,
+}
+
+/// Extern block
+///
+/// `"extern" strlit "{" item* "}"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Extern {
+    pub abi: Abi,
+    pub items: Vec<Item>,
+    pub span: Span,
 }
 
 /// Muon item
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     /// Function definition
-    ///
-    /// *NB: the first span is the span from `fun` to `)` and the last span is
-    /// the span of the entire item.*
-    ///
-    /// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
-    Fundef(Visibility, Identifier, Sig, Block, Span),
+    Fundef(Fundef),
     /// Function declaration
-    ///
-    /// *NB: the first span is the span from `fun` to `)` and the last span is
-    /// the span of the entire item.*
-    ///
-    /// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
-    Fundecl(Visibility, Identifier, Sig, Span),
+    Fundecl(Fundecl),
     /// Global definition
-    ///
-    /// `vis? "mut"? ident (":" type)? "=" expr ";"`
-    Globdef(Visibility, Mutability, Identifier, Option<Type>, Expr, Span),
+    Globdef(Globdef),
     /// Global declaration
-    ///
-    /// `vis? "mut"? ident ":" type ";"`
-    Globdecl(Visibility, Mutability, Identifier, Type, Span),
+    Globdecl(Globdecl),
     /// Extern block
-    ///
-    /// `"extern" strlit "{" item* "}"`
-    Extern(Abi, Vec<Item>, Span),
+    Extern(Extern),
     /// Directive
-    ///
-    /// `directive`
     Directive(Directive),
 }
 
 /// Function definition parameter
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Identifier,
     pub typ: Type,
@@ -86,20 +107,24 @@ pub struct Param {
 }
 
 /// Function definition / declaration signature
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Sig {
     pub params: Vec<Param>,
     pub ret: Option<Type>,
     pub span: Span,
 }
 
-/// [`Item`] and [`Module`] parsing
+/// [`Item`] and [`Mod`] parsing
 impl Parser {
     /// Parses a module
-    pub fn parse_module(&mut self) -> ReResult<Module> {
-        Ok(Module {
-            items: tri!(self.parse_item_seq()),
-            fid: self.fid,
+    pub fn parse_module(&mut self) -> ReResult<Mod> {
+        let lo = self.token.span;
+        let items = tri!(self.parse_item_seq());
+        let hi = self.token_span();
+
+        Ok(Mod {
+            items,
+            span: Span::join(lo, hi),
         })
     }
 
@@ -191,7 +216,7 @@ impl Parser {
             }
             Ident(_) if self.is_glob() => self.parse_glob_item(vis, mutability),
             Kw(Keyword::Extern) => self.parse_extern_item(vis, mutability),
-            Pound => self.parse_directive_item(),
+            Pound => self.parse_directive_item(vis, mutability),
             _ => {
                 self.bump();
 
@@ -263,22 +288,32 @@ impl Parser {
             let block = tri!(self.parse_block());
             let hi = block.span;
 
-            Ok(Item::Fundef(
-                vis.simplify(),
+            Ok(Item::Fundef(Fundef {
+                vis: vis.simplify(),
                 name,
                 sig,
                 block,
-                Span::join(lo, hi),
-            ))
+                span: Span::join(lo, hi),
+            }))
         } else if self.check(ExpToken::Semi) {
             let hi = tri!(self.expect(ExpToken::Semi));
 
-            Ok(Item::Fundecl(vis.simplify(), name, sig, Span::join(lo, hi)))
+            Ok(Item::Fundecl(Fundecl {
+                vis: vis.simplify(),
+                name,
+                sig,
+                span: Span::join(lo, hi),
+            }))
         } else {
             let span = Span::join(lo, sig.span);
 
             // NB: return a dumb item
-            self.expdiag_bump(Item::Fundecl(vis.simplify(), name, sig, span))
+            self.expdiag_bump(Item::Fundecl(Fundecl {
+                vis: vis.simplify(),
+                name,
+                sig,
+                span,
+            }))
         }
     }
 
@@ -308,21 +343,21 @@ impl Parser {
         let hi = tri!(self.expect(ExpToken::Semi));
 
         match (typ, expr) {
-            (typ, Some(expr)) => Ok(Item::Globdef(
-                vis.simplify(),
-                mutability.0,
+            (typ, Some(expr)) => Ok(Item::Globdef(Globdef {
+                vis: vis.simplify(),
+                mutability: mutability.0,
                 name,
                 typ,
                 expr,
-                Span::join(lo, hi),
-            )),
-            (Some(typ), None) => Ok(Item::Globdecl(
-                vis.simplify(),
-                mutability.0,
+                span: Span::join(lo, hi),
+            })),
+            (Some(typ), None) => Ok(Item::Globdecl(Globdecl {
+                vis: vis.simplify(),
+                mutability: mutability.0,
                 name,
                 typ,
-                Span::join(lo, hi),
-            )),
+                span: Span::join(lo, hi),
+            })),
             (None, None) => self
                 .dcx
                 .emit(ExpectedToken::new(
@@ -332,14 +367,14 @@ impl Parser {
                         span: hi,
                     },
                 ))
-                .recover_with(Item::Globdef(
-                    vis.simplify(),
-                    mutability.0,
+                .recover_with(Item::Globdef(Globdef {
+                    vis: vis.simplify(),
+                    mutability: mutability.0,
                     name,
-                    None,
-                    Expr::dummy(),
-                    Span::join(lo, hi),
-                )),
+                    typ: None,
+                    expr: Expr::dummy(),
+                    span: Span::join(lo, hi),
+                })),
         }
     }
 
@@ -392,11 +427,24 @@ impl Parser {
 
         let hi = tri!(self.expect(ExpToken::RCurly));
 
-        Ok(Item::Extern(abi, items, Span::join(lo, hi)))
+        Ok(Item::Extern(Extern {
+            abi,
+            items,
+            span: Span::join(lo, hi),
+        }))
     }
 
     /// Parses a directive item.
-    pub fn parse_directive_item(&mut self) -> ReResult<Item> {
-        Ok(Item::Directive(tri!(self.parse_directive())))
+    pub fn parse_directive_item(
+        &mut self,
+        vis: Visibility<Span>,
+        mutability: (Mutability, Option<Span>),
+    ) -> ReResult<Item> {
+        if let (Mutability::Mut, Some(mut_span)) = mutability {
+            self.dcx
+                .emit(MutQualifierNotPermitted { primary: mut_span });
+        }
+
+        Ok(Item::Directive(tri!(self.parse_directive(vis))))
     }
 }

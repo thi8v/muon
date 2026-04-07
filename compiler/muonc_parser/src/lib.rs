@@ -1,6 +1,7 @@
 //! Parser of Muon.
+#![allow(clippy::result_large_err)] // <- this is due to `ReResult<T>` where `T` is very large..
 
-use std::{borrow::Cow, mem};
+use std::{borrow::Cow, mem, sync::Arc};
 
 use bitflags::bitflags;
 use muonc_errors::prelude::*;
@@ -11,7 +12,7 @@ use muonc_token::{
     TsSealed, WeakKw,
 };
 
-use muonc_middle::ast::*;
+use muonc_middle::{ast::*, session::Session};
 
 use crate::diags::ExpectedToken;
 use ast::*;
@@ -35,10 +36,6 @@ pub struct Parser {
     pub(crate) tokens: TokenStream<TsSealed>,
     /// token index
     pub(crate) ti: usize,
-    /// diagnostic context
-    pub(crate) dcx: DiagCtxt,
-    /// file id of the file being parsed
-    pub(crate) fid: FileId,
     /// The current token
     pub(crate) token: Token,
     /// The previous token
@@ -52,25 +49,59 @@ pub struct Parser {
     pub(crate) restrictions: Restrictions,
     /// Used by [`Parser::parse_expr_stmt`].
     pub(crate) expr_semi_diag: Option<ExpectedToken>,
+    /// diagnostic context
+    pub(crate) dcx: DiagCtxt,
+    /// compilation session
+    pub(crate) session: Arc<Session>,
 }
 
 impl Parser {
     /// Create a new parser.
-    pub fn new(tokens: TokenStream<TsSealed>, dcx: DiagCtxt, fid: FileId) -> Parser {
+    pub fn new(tokens: TokenStream<TsSealed>, session: Arc<Session>) -> Parser {
         let token = tokens.get(0).clone();
 
         Parser {
             tokens,
             ti: 0,
-            dcx,
-            fid,
             token,
             prev_token: Token::dummy(),
             expected_token_exps: ExpTokenSet::new(),
             recovery: false,
             restrictions: Restrictions::empty(),
             expr_semi_diag: None,
+            dcx: session.dcx.clone(),
+            session,
         }
+    }
+
+    /// Create a new empty parser with a dumb token stream.
+    pub fn new_empty(session: Arc<Session>) -> Parser {
+        Parser::new(TokenStream::new_sealed(), session)
+    }
+
+    /// Clear the parser with the following tokenstream.
+    pub fn clear(&mut self, ts: TokenStream<TsSealed>) {
+        let Parser {
+            tokens,
+            ti,
+            token,
+            prev_token,
+            expected_token_exps,
+            recovery,
+            restrictions,
+            expr_semi_diag,
+            dcx: _,
+            session: _,
+        } = self;
+
+        *token = ts.get(0).clone();
+        *tokens = ts;
+        *ti = 0;
+        *prev_token = Token::dummy();
+        *expected_token_exps = ExpTokenSet::new();
+        *recovery = false;
+        *restrictions = Restrictions::empty();
+        *expr_semi_diag = None;
     }
 
     /// Advances the parser by one token.
@@ -380,18 +411,18 @@ impl Parser {
         }
     }
 
-    /// Return a result with `Err(Recovered::Yes(val, guarante))` if val is
+    /// Return a result with `Err(Recovered::Yes(val, guarantee))` if val is
     /// `Some(val)` or `Err(Recovered::No(guarantee))` otherwise, this function
-    /// is guranteed to emit the current expected token diagnostic.
+    /// is guaranteed to emit the current expected token diagnostic.
     #[track_caller]
     pub fn expdiag_bump<T>(&mut self, val: impl Into<Option<T>>) -> ReResult<T> {
         let diag = self.expected_diag();
         let guarantee = self.dcx.emit(diag);
 
         if let Some(val) = val.into() {
-            return Err(Recovered::Yes(val, guarantee));
+            Err(Recovered::Yes(val, guarantee))
         } else {
-            return Err(Recovered::No(guarantee));
+            Err(Recovered::No(guarantee))
         }
     }
 
@@ -400,9 +431,9 @@ impl Parser {
         let mut path = Path::new();
 
         if self.eat(ExpToken::Ident) {
-            path.push(self.as_ident().name);
+            path.push(self.as_ident());
         } else if self.eat(ExpToken::KwPkg) {
-            path.push_seg(PathSegment::Pkg);
+            path.push(PathSegment::Pkg(self.token_span()));
         } else {
             // NB. use a dumb span.
             return self.expdiag_bump(respan(path, self.token.span));
@@ -413,7 +444,7 @@ impl Parser {
 
         while self.eat_no_expect(ExpToken::ColonColon) {
             if self.eat(ExpToken::Ident) {
-                path.push(self.as_ident().name);
+                path.push(self.as_ident());
                 hi = self.token_span();
             } else {
                 self.recovery = true;
@@ -425,9 +456,12 @@ impl Parser {
                         level: Level::Help,
                         msg: "'pkg' can only be used at the start of a path".to_string(),
                     });
-                    path.push(sym::fakepkg);
+                    path.push(Identifier {
+                        name: sym::fakepkg,
+                        span: self.token_span(),
+                    });
                 } else {
-                    path.push(self.as_ident().name)
+                    path.push(self.as_ident())
                 }
 
                 self.dcx.emit(diag);
@@ -532,8 +566,9 @@ impl Parser {
     }
 
     /// Parses to a module.
-    pub fn produce(&mut self) -> ReResult<Module> {
-        let module = tri!(self.parse_module());
+    pub fn produce(&mut self) -> ReResult<Mod> {
+        let mut module = tri!(self.parse_module());
+        module.span = self.session.sm.file_span(module.span.fid);
 
         if let Some(guarantee) = self.dcx.has_emitted() {
             guarantee.recover_with(module)

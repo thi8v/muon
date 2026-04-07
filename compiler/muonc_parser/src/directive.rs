@@ -4,30 +4,76 @@ use crate::diags::UnknownDirective;
 
 use super::*;
 
+/// Module definition
+///
+/// *Allowed in: Item*
+///
+/// `vis? "#" "mod" ident "{" item* "}"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModDef {
+    pub vis: Visibility,
+    pub name: Identifier,
+    pub module: Mod,
+    pub span: Span,
+}
+
+/// Module declaration
+///
+/// *Allowed in: Item*
+///
+/// `vis? "#" "mod" ident ";"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModDecl {
+    pub vis: Visibility,
+    pub name: Identifier,
+    pub span: Span,
+}
+
+/// Import
+///
+/// *Allowed in: Item, Stmt*
+///
+/// `vis? "#" "import" path ( "as" ident )? ";"`
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub vis: Visibility,
+    pub path: Path,
+    pub alias: Option<Identifier>,
+    pub span: Span,
+}
+
 /// Muon directive
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Directive {
-    /// `"#" "mod" ident ";"`
-    ModDecl(Identifier, Span),
-    /// `"#" "mod" ident "{" item* "}"`
-    ModDef(Identifier, Module, Span),
-    /// `"#" "import" path ( "as" ident )? ";"`
-    Import(Path, Option<Identifier>, Span),
+    /// Module declaration
+    ModDecl(ModDecl),
+    /// Module definition
+    ModDef(ModDef),
+    /// Import
+    Import(Import),
 }
 
 impl Directive {
     /// List of the directives names.
     pub const DIRECTIVE_NAMES: &[Symbol] = &[sym::Mod, sym::Import];
+
+    pub fn span(&self) -> Span {
+        match self {
+            Directive::ModDecl(ModDecl { span, .. })
+            | Directive::ModDef(ModDef { span, .. })
+            | Directive::Import(Import { span, .. }) => *span,
+        }
+    }
 }
 
 impl Parser {
     /// Parses a directive
-    pub fn parse_directive(&mut self) -> ReResult<Directive> {
+    pub fn parse_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
         let tok = self.look_ahead(1, look_tok).clone();
 
         match tok.tt {
-            Ident(sym::Mod) => self.parse_mod_directive(),
-            Ident(sym::Import) => self.parse_import_directive(),
+            Ident(sym::Mod) => self.parse_mod_directive(vis),
+            Ident(sym::Import) => self.parse_import_directive(vis),
             Ident(name) => {
                 self.bump(); // '#'
                 self.bump(); // the ident
@@ -51,8 +97,9 @@ impl Parser {
     }
 
     /// Parses a module directive
-    pub fn parse_mod_directive(&mut self) -> ReResult<Directive> {
-        let lo = tri!(self.expect(ExpToken::Pound));
+    pub fn parse_mod_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
+        let lo_pound = tri!(self.expect(ExpToken::Pound));
+        let lo = vis.as_val().copied().unwrap_or(lo_pound);
 
         tri!(self.expect_weak_kw(WeakKw::Mod));
 
@@ -62,16 +109,25 @@ impl Parser {
         if self.eat(ExpToken::Semi) {
             let hi = self.token_span();
 
-            Ok(Directive::ModDecl(name, Span::join(lo, hi)))
+            Ok(Directive::ModDecl(ModDecl {
+                vis: vis.simplify(),
+                name,
+                span: Span::join(lo, hi),
+            }))
         } else if self.eat(ExpToken::LCurly) {
-            let module = self.parse_module().dere_or(|| Module {
+            let module = self.parse_module().dere_or(|| Mod {
                 items: vec![],
-                fid: self.fid,
+                span: DUMMY_SP,
             });
 
             let hi = tri!(self.expect(ExpToken::RCurly));
 
-            Ok(Directive::ModDef(name, module, Span::join(lo, hi)))
+            Ok(Directive::ModDef(ModDef {
+                vis: vis.simplify(),
+                name,
+                module,
+                span: Span::join(lo, hi),
+            }))
         } else {
             // failed, return the guarantee
             self.expdiag_bump(None)
@@ -79,8 +135,9 @@ impl Parser {
     }
 
     /// Parses an import directive
-    pub fn parse_import_directive(&mut self) -> ReResult<Directive> {
-        let lo = tri!(self.expect(ExpToken::Pound));
+    pub fn parse_import_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
+        let lo_pound = tri!(self.expect(ExpToken::Pound));
+        let lo = vis.as_val().copied().unwrap_or(lo_pound);
 
         tri!(self.expect_weak_kw(WeakKw::Import));
 
@@ -96,6 +153,11 @@ impl Parser {
 
         let hi = tri!(self.expect(ExpToken::Semi));
 
-        Ok(Directive::Import(path, alias, Span::join(lo, hi)))
+        Ok(Directive::Import(Import {
+            vis: vis.simplify(),
+            path,
+            alias,
+            span: Span::join(lo, hi),
+        }))
     }
 }

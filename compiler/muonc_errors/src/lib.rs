@@ -3,7 +3,6 @@
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display, Write},
-    mem,
     ops::Deref,
     panic::Location,
     path::{Component, Path, PathBuf},
@@ -12,6 +11,7 @@ use std::{
 };
 
 use bitflags::bitflags;
+use enum_ordinalize::Ordinalize;
 use indexmap::IndexSet;
 use muonc_macros::codes_enum;
 use muonc_span::{Bsz, Span, source::SourceMap, symbol::Symbol};
@@ -38,6 +38,7 @@ pub enum Level {
 
 codes_enum! {
     /// List of all the errors Muon can emit.
+    #[derive(Ordinalize)]
     pub enum ErrCode: 'E' {
         UnknownToken = 1,
         UnterminatedBlockComment = 2,
@@ -56,15 +57,24 @@ codes_enum! {
         VisQualifierNotPermitted = 15,
         InvalidAbi = 16,
         MalformedIfExpr = 17,
+        ModuleFilePathErr = 18,
+        UseOfUndefinedLabel = 19,
+        LabelKwOutsideLoopOrBlock = 20,
+        BreakWithValueUnsupported = 21,
+        CantContinueABlock = 22,
+        NotFoundInScope = 23,
+        AmbiguousName = 24,
+        NameDefinedMultipleTimes = 25,
     }
 }
 
 codes_enum! {
     /// List of all the warnings Muon can emit.
+    #[derive(Ordinalize)]
     pub enum WarnCode: 'W' {
         // NOTE: placeholders are here temporarily because WarnCode should have
         // the size of a u8
-        __PlaceHolder1 = 1,
+        LabelShadowed= 1,
         __PlaceHolder2 = 2,
     }
 }
@@ -152,6 +162,11 @@ impl MultiSpan {
         self.spans.len()
     }
 
+    /// Push a span
+    pub fn push_span(&mut self, label: Label) {
+        self.spans.push(label);
+    }
+
     /// Gets an iterator of the spans.
     pub fn iter(&self) -> impl Iterator<Item = &Label> {
         self.spans.iter()
@@ -213,27 +228,22 @@ impl FromStr for Code {
         let code: u32 = digits.parse().map_err(|_| "numeric code overflow")?;
 
         match kind {
-            'E' => {
-                if code <= 0 || code as usize > ErrCode::VARIANT_COUNT {
-                    return Err("invalid error code");
-                }
-
-                // SAFETY: we checked before.
-                let code: ErrCode = unsafe { mem::transmute::<u8, ErrCode>(code as u8) };
-
-                Ok(Code::Err(code))
-            }
-            'W' => {
-                if code <= 0 || code as usize > WarnCode::VARIANT_COUNT {
-                    return Err("invalid warning code");
-                }
-
-                // SAFETY: we checked before.
-                let code: WarnCode = unsafe { mem::transmute::<u8, WarnCode>(code as u8) };
-
-                Ok(Code::Warn(code))
-            }
+            'E' => Ok(Code::Err(
+                ErrCode::from_ordinal(code as i8).ok_or("invalid error code")?,
+            )),
+            'W' => Ok(Code::Warn(
+                WarnCode::from_ordinal(code as i8).ok_or("invalid warn code")?,
+            )),
             _ => Err("unknown kind of diagnostic code"),
+        }
+    }
+}
+
+impl fmt::Display for Code {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Err(err) => fmt::Display::fmt(err, f),
+            Self::Warn(warn) => fmt::Display::fmt(warn, f),
         }
     }
 }
@@ -369,6 +379,13 @@ impl Diag {
         self.children.push(sub.into());
         self
     }
+
+    /// Append many subdiags at once.
+    pub fn with_subdiag_iter(mut self, subs: impl IntoIterator<Item = Subdiag>) -> Diag {
+        self.children.extend(subs);
+
+        self
+    }
 }
 
 impl Diagnostic for Diag {
@@ -410,6 +427,8 @@ pub struct DiagCtxtInner {
     /// list of emitted error codes, used to be able to have `muonc --explain
     /// <errcode>`
     emitted_err_code: IndexSet<ErrCode>,
+    /// same as `emitted_err_code` but for warnings
+    emitted_warn_code: IndexSet<WarnCode>,
     /// the source map.
     sm: Arc<SourceMap>,
     /// configuration flags.
@@ -462,6 +481,7 @@ impl DiagCtxt {
                 warnings: 0,
                 other: 0,
                 emitted_err_code: IndexSet::new(),
+                emitted_warn_code: IndexSet::new(),
                 sm,
                 flags,
             })),
@@ -524,7 +544,7 @@ impl DiagCtxt {
         self.with_inner_mut(|this| {
             match diag.level {
                 Level::Error => this.errors += 1,
-                Level::Warning => this.errors += 1,
+                Level::Warning => this.warnings += 1,
                 _ => this.other += 1,
             }
 
@@ -534,8 +554,14 @@ impl DiagCtxt {
                 diag.emitted_at = DiagEmitLoc::from(caller_loc);
             }
 
-            if let Some(Code::Err(errcode)) = diag.code {
-                this.emitted_err_code.insert(errcode);
+            match diag.code {
+                Some(Code::Err(errcode)) => {
+                    this.emitted_err_code.insert(errcode);
+                }
+                Some(Code::Warn(warncode)) => {
+                    this.emitted_warn_code.insert(warncode);
+                }
+                _ => {}
             }
 
             let diag = if this.flags.contains(DiagCtxtFlags::TRACK_DIAGNOSTICS) && can_debug_diag {
@@ -571,13 +597,34 @@ impl DiagCtxt {
         eprintln!("{}", renderer.render());
     }
 
-    /// Returns the 5 first error code that have been emitted and `true` if there is more than 5.
-    pub fn err_codes(&self) -> (Vec<ErrCode>, bool) {
+    /// Returns the at most 5 first error code that have been emitted, if it
+    /// failed or the same but with warncodes and `true` if there is more than
+    /// 5.
+    pub fn first_codes(&self) -> (Vec<Code>, bool, &'static str) {
         self.with_inner(|this| {
-            let codes = this.emitted_err_code.iter().take(5).copied().collect();
-            let more = this.emitted_err_code.len() > 5;
+            if this.errors > 0 {
+                let codes = this
+                    .emitted_err_code
+                    .iter()
+                    .take(5)
+                    .copied()
+                    .map(Code::Err)
+                    .collect();
+                let more = this.emitted_err_code.len() > 5;
 
-            (codes, more)
+                (codes, more, "error")
+            } else {
+                let codes = this
+                    .emitted_warn_code
+                    .iter()
+                    .take(5)
+                    .copied()
+                    .map(Code::Warn)
+                    .collect();
+                let more = this.emitted_warn_code.len() > 5;
+
+                (codes, more, "warning")
+            }
         })
         .expect("unable to lock the diagnostic context")
     }
@@ -774,7 +821,7 @@ impl FeatureNotImplemented {
         FeatureNotImplemented {
             feature_name: name.to_string(),
             label_text: label_text.to_string(),
-            primary: primary,
+            primary,
             emit_loc: DiagEmitLoc::from(Location::caller()),
         }
     }

@@ -773,6 +773,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "muonc_errors",
+ "muonc_hir",
  "muonc_lexer",
  "muonc_macros",
  "muonc_middle",
@@ -787,14 +788,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "muonc_entity"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+]
+
+[[package]]
 name = "muonc_errors"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
  "bitflags",
+ "enum-ordinalize",
  "indexmap",
  "muonc_macros",
  "muonc_span",
+ "muonc_utils",
+]
+
+[[package]]
+name = "muonc_hir"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "muonc_entity",
+ "muonc_errors",
+ "muonc_lexer",
+ "muonc_middle",
+ "muonc_parser",
+ "muonc_span",
+ "muonc_token",
  "muonc_utils",
 ]
 
@@ -851,6 +875,7 @@ dependencies = [
  "boxcar",
  "bumpalo",
  "dashmap",
+ "muonc_entity",
  "muonc_macros",
 ]
 
@@ -866,6 +891,7 @@ dependencies = [
 name = "muonc_utils"
 version = "0.1.0"
 dependencies = [
+ "muonc_entity",
  "muonc_span",
  "strsim",
 ]

@@ -1,5 +1,6 @@
 //! Prelude of `muonc_span`.
 
+pub use crate::def_id::DefId;
 pub use crate::symbol::{
     GLOBAL_INTERNER, Identifier, PREDEFINED_SYMBOLS_COUNT, Symbol, categories, sym,
 };

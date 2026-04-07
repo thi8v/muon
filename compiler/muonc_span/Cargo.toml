@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 muonc_macros = { workspace = true }
+muonc_entity = { workspace = true }
 
 # other dependencies
 boxcar = { workspace = true }

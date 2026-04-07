@@ -12,6 +12,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser as ArgParser, ValueEnum};
+use muonc_hir::{lowering::LoweringCtx, resolve::Resolver};
 use termimad::MadSkin;
 use thiserror::Error;
 
@@ -106,6 +107,7 @@ pub enum CompResults {
     Inputfile,
     TokenStream,
     Ast,
+    Hir,
 }
 
 from_value_enum!(CompResults);
@@ -140,7 +142,7 @@ pub struct DebugOptions {
 impl DebugOptions {
     /// Does the options contains this compile result to print?
     pub fn contains_print(&self, res: CompResults) -> bool {
-        self.print.iter().find(|this| **this == res).is_some()
+        self.print.contains(&res)
     }
 }
 
@@ -281,26 +283,6 @@ pub fn run() -> Result<(), CliError> {
         initial,
     );
 
-    // /// helper to recover from errors in the compilation pipeline.
-    // pub fn builderr<T>(sess: Arc<Session>, recoverable: Recovered<T>) -> Result<T, CliError> {
-    //     match recoverable {
-    //         Recovered::Yes(val, guarantee) => {
-    //             _ = guarantee;
-    //             Ok(val)
-    //         }
-    //         Recovered::No(guarantee) => {
-    //             sess.emit_summary();
-
-    //             sess.dcx.render();
-
-    //             Err(CliError::BuildFailed {
-    //                 guarantee,
-    //                 failed: sess.dcx.failed(),
-    //             })
-    //         }
-    //     }
-    // }
-
     let builderr = |guarantee: DiagGuaranteed| -> Result<(), CliError> {
         sess.emit_summary();
         sess.dcx.render();
@@ -348,7 +330,7 @@ pub fn run() -> Result<(), CliError> {
     sess.elapsed_lexer();
 
     // 4. parses the root file
-    let mut parser = Parser::new(tokenstream, sess.dcx.clone(), root_fid);
+    let mut parser = Parser::new(tokenstream, sess.clone());
     let ast = match parser.produce().dere() {
         Ok(ast) => ast,
         Err(guarantee) => return builderr(guarantee),
@@ -358,9 +340,33 @@ pub fn run() -> Result<(), CliError> {
     if debug_opts.contains_print(CompResults::Ast) {
         eprintln!("/* ast */");
         ast.dump(&());
+        eprintln!();
     }
 
     sess.elapsed_parser();
+
+    // 5. HIR, AST => HIR
+    let mut lowerctx = LoweringCtx::new(sess.clone());
+
+    let mut hir = match lowerctx.produce(ast).dere() {
+        Ok(hir) => hir,
+        Err(guarantee) => return builderr(guarantee),
+    };
+
+    let mut resolver = Resolver::new(&mut hir, sess.dcx.clone());
+
+    match resolver.resolve().dere() {
+        Ok(()) => {}
+        Err(guarantee) => return builderr(guarantee),
+    }
+
+    if debug_opts.contains_print(CompResults::Hir) {
+        eprintln!("/* hir */");
+        hir.dump(&muonc_hir::pretty::PkgDumper);
+        eprintln!();
+    }
+
+    sess.elapsed_hir();
 
     sess.set_total_timings();
 

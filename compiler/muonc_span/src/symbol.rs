@@ -92,8 +92,19 @@ impl fmt::Display for Symbol {
     }
 }
 
+/// Creates an iterator from a symbol category.
+pub fn category_iter(cat: RangeInclusive<Symbol>) -> impl Iterator<Item = Symbol> {
+    // SAFETY: we are sure that it's safe to call `NonZeroU32::new_unchecked`
+    // because just before we deconstruct the range of Symbol that guarantees we
+    // can't have i == 0.
+    unsafe {
+        (cat.start().as_usize()..=cat.end().as_usize())
+            .map(|i| Symbol(NonZeroU32::new_unchecked(i as u32)))
+    }
+}
+
 /// Identifier, the name of the identifier cannot be [`sym::empty`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Identifier {
     pub name: Symbol,
     pub span: Span,
@@ -101,9 +112,11 @@ pub struct Identifier {
 
 impl Identifier {
     /// Create a new identifier.
+    ///
+    /// *NB: creating identifiers with a keyword name works.*
     pub fn new(name: Symbol, span: Span) -> Identifier {
         debug_assert!(
-            name.can_identifier(),
+            name.can_identifier() || name.is_keyword(),
             "cannot create an identifier with a symbol that can't be an identifier."
         );
         Self { name, span }
@@ -115,8 +128,13 @@ impl Identifier {
     }
 
     /// Access the underlying string representing it.
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         self.name.as_str()
+    }
+
+    /// Create a new identifier with the span of self.
+    pub fn with_name(self, name: Symbol) -> Identifier {
+        Identifier::new(name, self.span)
     }
 }
 
@@ -289,6 +307,17 @@ symbols! {
         char,
         never,
         void,
+    ],
+
+    // name resolution categories.
+    res: [
+        primty = "primitive type",
+        local,
+        module,
+        function,
+        global,
+        import,
+        extern_res = "extern",
     ],
 
     cstr = "cstr",
