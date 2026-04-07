@@ -25,7 +25,6 @@ impl<E> PrettyDump<E> for Item {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
             Item::Fundef(Fundef {
-                vis,
                 name,
                 sig,
                 block,
@@ -36,7 +35,6 @@ impl<E> PrettyDump<E> for Item {
                     extra,
                     "Fundef",
                     {
-                        vis,
                         name,
                         sig,
                         block,
@@ -46,18 +44,12 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Fundecl(Fundecl {
-                vis,
-                name,
-                sig,
-                span,
-            }) => {
+            Item::Fundecl(Fundecl { name, sig, span }) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Fundecl",
                     {
-                        vis,
                         name,
                         sig,
                     },
@@ -67,7 +59,6 @@ impl<E> PrettyDump<E> for Item {
                 Ok(())
             }
             Item::Globdef(Globdef {
-                vis,
                 mutability,
                 name,
                 typ,
@@ -79,7 +70,6 @@ impl<E> PrettyDump<E> for Item {
                     extra,
                     "Globdef",
                     {
-                        vis,
                         mutability,
                         name,
                         typ,
@@ -91,7 +81,6 @@ impl<E> PrettyDump<E> for Item {
                 Ok(())
             }
             Item::Globdecl(Globdecl {
-                vis,
                 mutability,
                 name,
                 typ,
@@ -102,7 +91,6 @@ impl<E> PrettyDump<E> for Item {
                     extra,
                     "Globdecl",
                     {
-                        vis,
                         mutability,
                         name,
                         typ,
@@ -134,13 +122,12 @@ impl<E> PrettyDump<E> for Item {
 impl<E> PrettyDump<E> for Directive {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
-            Directive::ModDecl(ModDecl { vis, name, span }) => {
+            Directive::ModDecl(ModDecl { name, span }) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Directive::ModDecl",
                     {
-                        vis,
                         name,
                     },
                     span
@@ -149,7 +136,6 @@ impl<E> PrettyDump<E> for Directive {
                 Ok(())
             }
             Directive::ModDef(ModDef {
-                vis,
                 name,
                 module: Mod { items, span: _ },
                 span,
@@ -159,7 +145,6 @@ impl<E> PrettyDump<E> for Directive {
                     extra,
                     "Directive::ModDef",
                     {
-                        vis,
                         name,
                         items,
                     },
@@ -168,18 +153,12 @@ impl<E> PrettyDump<E> for Directive {
 
                 Ok(())
             }
-            Directive::Import(Import {
-                vis,
-                path,
-                alias,
-                span,
-            }) => {
+            Directive::Import(Import { path, alias, span }) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Directive::Import",
                     {
-                        vis,
                         path,
                         alias,
                     },

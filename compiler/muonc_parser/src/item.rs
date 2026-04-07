@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use crate::diags::{InvalidAbi, MutQualifierNotPermitted, VisQualifierNotPermitted};
+use crate::diags::{InvalidAbi, MutQualifierNotPermitted};
 
 use super::*;
 
@@ -22,10 +22,9 @@ pub struct Mod {
 /// *NB: the first span is the span from `fun` to `)` and the last span is
 /// the span of the entire item.*
 ///
-/// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
+/// `ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fundef {
-    pub vis: Visibility,
     pub name: Identifier,
     pub sig: Sig,
     pub block: Block,
@@ -37,10 +36,9 @@ pub struct Fundef {
 /// *NB: the first span is the span from `fun` to `)` and the last span is
 /// the span of the entire item.*
 ///
-/// `vis? ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
+/// `ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fundecl {
-    pub vis: Visibility,
     pub name: Identifier,
     pub sig: Sig,
     pub span: Span,
@@ -48,10 +46,9 @@ pub struct Fundecl {
 
 /// Global definition
 ///
-/// `vis? "mut"? ident (":" type)? "=" expr ";"`
+/// `"mut"? ident ":" (type)? "=" expr ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Globdef {
-    pub vis: Visibility,
     pub mutability: Mutability,
     pub name: Identifier,
     pub typ: Option<Type>,
@@ -61,10 +58,9 @@ pub struct Globdef {
 
 /// Global declaration
 ///
-/// `vis? "mut"? ident ":" type ";"`
+/// `"mut"? ident ":" type ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Globdecl {
-    pub vis: Visibility,
     pub mutability: Mutability,
     pub name: Identifier,
     pub typ: Type,
@@ -205,18 +201,16 @@ impl Parser {
 
     /// Parses an item
     pub fn parse_item(&mut self) -> ReResult<Item> {
-        let vis = self.parse_vis();
-
         let mutability = self.parse_mutability();
         let mutability = (mutability, mutability.is_mut().then(|| self.token_span()));
 
         match self.token.tt {
             Ident(_) if self.look_ahead(1, |tok| matches!(tok.tt, ColonColon)) => {
-                self.parse_fun_item(vis, mutability)
+                self.parse_fun_item(mutability)
             }
-            Ident(_) if self.is_glob() => self.parse_glob_item(vis, mutability),
-            Kw(Keyword::Extern) => self.parse_extern_item(vis, mutability),
-            Pound => self.parse_directive_item(vis, mutability),
+            Ident(_) if self.is_glob() => self.parse_glob_item(mutability),
+            Kw(Keyword::Extern) => self.parse_extern_item(mutability),
+            Pound => self.parse_directive_item(mutability),
             _ => {
                 self.bump();
 
@@ -245,24 +239,14 @@ impl Parser {
     }
 
     /// Parses a fundef/fundecl item.
-    pub fn parse_fun_item(
-        &mut self,
-        vis: Visibility<Span>,
-        mutability: (Mutability, Option<Span>),
-    ) -> ReResult<Item> {
+    pub fn parse_fun_item(&mut self, mutability: (Mutability, Option<Span>)) -> ReResult<Item> {
         if let (Mutability::Mut, Some(mut_span)) = mutability {
             self.dcx
                 .emit(MutQualifierNotPermitted { primary: mut_span });
         }
 
-        let name_span = tri!(self.expect(ExpToken::Ident));
+        let lo = tri!(self.expect(ExpToken::Ident));
         let name = self.as_ident();
-
-        let lo = if let Visibility::Public(span) = vis {
-            span
-        } else {
-            name_span
-        };
 
         tri!(self.expect(ExpToken::ColonColon));
 
@@ -289,7 +273,6 @@ impl Parser {
             let hi = block.span;
 
             Ok(Item::Fundef(Fundef {
-                vis: vis.simplify(),
                 name,
                 sig,
                 block,
@@ -299,7 +282,6 @@ impl Parser {
             let hi = tri!(self.expect(ExpToken::Semi));
 
             Ok(Item::Fundecl(Fundecl {
-                vis: vis.simplify(),
                 name,
                 sig,
                 span: Span::join(lo, hi),
@@ -308,43 +290,37 @@ impl Parser {
             let span = Span::join(lo, sig.span);
 
             // NB: return a dumb item
-            self.expdiag_bump(Item::Fundecl(Fundecl {
-                vis: vis.simplify(),
-                name,
-                sig,
-                span,
-            }))
+            self.expdiag_bump(Item::Fundecl(Fundecl { name, sig, span }))
         }
     }
 
     /// Parses a globdef/globdecl item.
-    pub fn parse_glob_item(
-        &mut self,
-        vis: Visibility<Span>,
-        mutability: (Mutability, Option<Span>),
-    ) -> ReResult<Item> {
+    pub fn parse_glob_item(&mut self, mutability: (Mutability, Option<Span>)) -> ReResult<Item> {
         let name_span = tri!(self.expect(ExpToken::Ident));
         let name = self.as_ident();
 
-        let lo = vis.as_val().copied().or(mutability.1).unwrap_or(name_span);
+        let lo = mutability.1.unwrap_or(name_span);
 
-        let typ = if self.eat_no_expect(ExpToken::Colon) {
-            Some(tri!(self.parse_type()))
-        } else {
-            None
-        };
+        self.expect(ExpToken::Colon).discard();
 
-        let expr = if self.eat_no_expect(ExpToken::Eq) {
-            Some(tri!(self.parse_expr()))
+        let (ty, expr) = if self.eat_no_expect(ExpToken::Eq) {
+            (None, Some(tri!(self.parse_expr())))
         } else {
-            None
+            let ty = tri!(self.parse_type());
+
+            let expr = if self.eat_no_expect(ExpToken::Eq) {
+                Some(tri!(self.parse_expr()))
+            } else {
+                None
+            };
+
+            (Some(ty), expr)
         };
 
         let hi = tri!(self.expect(ExpToken::Semi));
 
-        match (typ, expr) {
+        match (ty, expr) {
             (typ, Some(expr)) => Ok(Item::Globdef(Globdef {
-                vis: vis.simplify(),
                 mutability: mutability.0,
                 name,
                 typ,
@@ -352,46 +328,20 @@ impl Parser {
                 span: Span::join(lo, hi),
             })),
             (Some(typ), None) => Ok(Item::Globdecl(Globdecl {
-                vis: vis.simplify(),
                 mutability: mutability.0,
                 name,
                 typ,
                 span: Span::join(lo, hi),
             })),
-            (None, None) => self
-                .dcx
-                .emit(ExpectedToken::new(
-                    [ExpToken::Colon, ExpToken::Eq],
-                    Token {
-                        tt: TokenType::Semi,
-                        span: hi,
-                    },
-                ))
-                .recover_with(Item::Globdef(Globdef {
-                    vis: vis.simplify(),
-                    mutability: mutability.0,
-                    name,
-                    typ: None,
-                    expr: Expr::dummy(),
-                    span: Span::join(lo, hi),
-                })),
+            (None, None) => unreachable!(),
         }
     }
 
     /// Parses a extern block item.
-    pub fn parse_extern_item(
-        &mut self,
-        vis: Visibility<Span>,
-        mutability: (Mutability, Option<Span>),
-    ) -> ReResult<Item> {
+    pub fn parse_extern_item(&mut self, mutability: (Mutability, Option<Span>)) -> ReResult<Item> {
         if let (Mutability::Mut, Some(mut_span)) = mutability {
             self.dcx
                 .emit(MutQualifierNotPermitted { primary: mut_span });
-        }
-
-        if let Visibility::Public(vis_span) = vis {
-            self.dcx
-                .emit(VisQualifierNotPermitted { primary: vis_span });
         }
 
         let lo = tri!(self.expect(ExpToken::KwExtern));
@@ -437,7 +387,6 @@ impl Parser {
     /// Parses a directive item.
     pub fn parse_directive_item(
         &mut self,
-        vis: Visibility<Span>,
         mutability: (Mutability, Option<Span>),
     ) -> ReResult<Item> {
         if let (Mutability::Mut, Some(mut_span)) = mutability {
@@ -445,6 +394,6 @@ impl Parser {
                 .emit(MutQualifierNotPermitted { primary: mut_span });
         }
 
-        Ok(Item::Directive(tri!(self.parse_directive(vis))))
+        Ok(Item::Directive(tri!(self.parse_directive())))
     }
 }

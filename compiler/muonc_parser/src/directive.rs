@@ -8,10 +8,9 @@ use super::*;
 ///
 /// *Allowed in: Item*
 ///
-/// `vis? "#" "mod" ident "{" item* "}"`
+/// `"#" "mod" ident "{" item* "}"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDef {
-    pub vis: Visibility,
     pub name: Identifier,
     pub module: Mod,
     pub span: Span,
@@ -21,10 +20,9 @@ pub struct ModDef {
 ///
 /// *Allowed in: Item*
 ///
-/// `vis? "#" "mod" ident ";"`
+/// `"#" "mod" ident ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModDecl {
-    pub vis: Visibility,
     pub name: Identifier,
     pub span: Span,
 }
@@ -33,10 +31,9 @@ pub struct ModDecl {
 ///
 /// *Allowed in: Item, Stmt*
 ///
-/// `vis? "#" "import" path ( "as" ident )? ";"`
+/// `"#" "import" path ( "as" ident )? ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
-    pub vis: Visibility,
     pub path: Path,
     pub alias: Option<Identifier>,
     pub span: Span,
@@ -68,12 +65,12 @@ impl Directive {
 
 impl Parser {
     /// Parses a directive
-    pub fn parse_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
+    pub fn parse_directive(&mut self) -> ReResult<Directive> {
         let tok = self.look_ahead(1, look_tok).clone();
 
         match tok.tt {
-            Ident(sym::Mod) => self.parse_mod_directive(vis),
-            Ident(sym::Import) => self.parse_import_directive(vis),
+            Ident(sym::Mod) => self.parse_mod_directive(),
+            Ident(sym::Import) => self.parse_import_directive(),
             Ident(name) => {
                 self.bump(); // '#'
                 self.bump(); // the ident
@@ -97,9 +94,8 @@ impl Parser {
     }
 
     /// Parses a module directive
-    pub fn parse_mod_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
-        let lo_pound = tri!(self.expect(ExpToken::Pound));
-        let lo = vis.as_val().copied().unwrap_or(lo_pound);
+    pub fn parse_mod_directive(&mut self) -> ReResult<Directive> {
+        let lo = tri!(self.expect(ExpToken::Pound));
 
         tri!(self.expect_weak_kw(WeakKw::Mod));
 
@@ -110,7 +106,6 @@ impl Parser {
             let hi = self.token_span();
 
             Ok(Directive::ModDecl(ModDecl {
-                vis: vis.simplify(),
                 name,
                 span: Span::join(lo, hi),
             }))
@@ -123,7 +118,6 @@ impl Parser {
             let hi = tri!(self.expect(ExpToken::RCurly));
 
             Ok(Directive::ModDef(ModDef {
-                vis: vis.simplify(),
                 name,
                 module,
                 span: Span::join(lo, hi),
@@ -135,9 +129,8 @@ impl Parser {
     }
 
     /// Parses an import directive
-    pub fn parse_import_directive(&mut self, vis: Visibility<Span>) -> ReResult<Directive> {
-        let lo_pound = tri!(self.expect(ExpToken::Pound));
-        let lo = vis.as_val().copied().unwrap_or(lo_pound);
+    pub fn parse_import_directive(&mut self) -> ReResult<Directive> {
+        let lo = tri!(self.expect(ExpToken::Pound));
 
         tri!(self.expect_weak_kw(WeakKw::Import));
 
@@ -154,7 +147,6 @@ impl Parser {
         let hi = tri!(self.expect(ExpToken::Semi));
 
         Ok(Directive::Import(Import {
-            vis: vis.simplify(),
             path,
             alias,
             span: Span::join(lo, hi),

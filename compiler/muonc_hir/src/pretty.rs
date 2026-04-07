@@ -159,6 +159,7 @@ impl PrettyDump<PkgDumper> for NodeOwner {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         let NodeOwner { nodes } = self;
 
+        write!(ctx.out, "Owner ")?;
         ctx.pretty_map(nodes.full_iter(), extra)
     }
 }
@@ -218,19 +219,13 @@ impl PrettyDump<PkgDumper> for ItemKind {
 
 impl PrettyDump<PkgDumper> for Fundef {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Fundef {
-            vis,
-            name,
-            sig,
-            body,
-        } = self;
+        let Fundef { name, sig, body } = self;
 
         pretty_struct! {
             ctx,
             extra,
             "Fundef",
             {
-                vis,
                 name,
                 sig,
                 body,
@@ -262,14 +257,13 @@ impl PrettyDump<PkgDumper> for Sig {
 
 impl PrettyDump<PkgDumper> for Fundecl {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Fundecl { vis, name, sig } = self;
+        let Fundecl { name, sig } = self;
 
         pretty_struct! {
             ctx,
             extra,
             "Fundecl",
             {
-                vis,
                 name,
                 sig,
             }
@@ -282,7 +276,6 @@ impl PrettyDump<PkgDumper> for Fundecl {
 impl PrettyDump<PkgDumper> for Globdef {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         let Globdef {
-            vis,
             mutability,
             name,
             typ,
@@ -294,7 +287,6 @@ impl PrettyDump<PkgDumper> for Globdef {
             extra,
             "Globdef",
             {
-                vis,
                 mutability,
                 name,
                 typ,
@@ -309,7 +301,6 @@ impl PrettyDump<PkgDumper> for Globdef {
 impl PrettyDump<PkgDumper> for Globdecl {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         let Globdecl {
-            vis,
             mutability,
             name,
             typ,
@@ -320,7 +311,6 @@ impl PrettyDump<PkgDumper> for Globdecl {
             extra,
             "Globdecl",
             {
-                vis,
                 mutability,
                 name,
                 typ,
@@ -365,13 +355,12 @@ impl PrettyDump<PkgDumper> for Directive {
 
                 Ok(())
             }
-            Directive::Import { vis, path, alias } => {
+            Directive::Import { path, alias } => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Directive::Import",
                     {
-                        vis,
                         path,
                         alias,
                     }
@@ -385,18 +374,13 @@ impl PrettyDump<PkgDumper> for Directive {
 
 impl PrettyDump<PkgDumper> for Mod {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Mod { vis, items, span } = self;
+        let Mod { items, span } = self;
 
-        pretty_struct! {
-            ctx,
-            extra,
-            "Mod",
-            {
-                vis,
-                items,
-            },
-            span
-        }
+        ctx.pretty_list(Some("Mod"), extra)
+            .items(items)
+            .disable_nl()
+            .finish()?;
+        ctx.print_span(span)?;
 
         Ok(())
     }

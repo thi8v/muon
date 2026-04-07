@@ -5,10 +5,7 @@ use std::{mem, path::PathBuf, sync::Arc};
 use muonc_entity::{EntityMap, Opt};
 use muonc_errors::{FeatureNotImplemented, prelude::*};
 use muonc_lexer::Lexer;
-use muonc_middle::{
-    ast::{UnOp, Visibility},
-    session::Session,
-};
+use muonc_middle::{ast::UnOp, session::Session};
 use muonc_parser::{Parser, ast};
 use muonc_span::prelude::*;
 use muonc_token::{Lit, TokenStream};
@@ -242,7 +239,6 @@ impl LoweringCtx {
 
         let mut nodes = EntityMap::new();
         nodes.create(hir::Node::Package(hir::Mod {
-            vis: Visibility::Public(()),
             items: vec![],
             span,
         }));
@@ -537,7 +533,6 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Fundef(hir::Fundef {
-                vis: fundef.vis,
                 name: fundef.name,
                 sig,
                 body,
@@ -981,7 +976,6 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Fundecl(hir::Fundecl {
-                vis: fundecl.vis,
                 name: fundecl.name,
                 sig,
             }),
@@ -996,7 +990,6 @@ impl LoweringCtx {
 
         Ok(self.mk_item(
             hir::ItemKind::Globdef(hir::Globdef {
-                vis: globdef.vis,
                 mutability: globdef.mutability,
                 name: globdef.name,
                 typ,
@@ -1012,7 +1005,6 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Globdecl(hir::Globdecl {
-                vis: globdecl.vis,
                 mutability: globdecl.mutability,
                 name: globdecl.name,
                 typ,
@@ -1050,7 +1042,7 @@ impl LoweringCtx {
         let item_id = self.mk_item(
             hir::ItemKind::Directive(hir::Directive::Mod(
                 moddef.name,
-                hir::Mod::new(moddef.vis, moddef.module.span),
+                hir::Mod::new(moddef.module.span),
             )),
             moddef.span,
         );
@@ -1140,7 +1132,7 @@ impl LoweringCtx {
         let item_id = self.mk_item(
             hir::ItemKind::Directive(hir::Directive::Mod(
                 moddecl.name,
-                hir::Mod::new(moddecl.vis, mod_ast.span),
+                hir::Mod::new(mod_ast.span),
             )),
             moddecl.span,
         );
@@ -1179,7 +1171,6 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Directive(hir::Directive::Import {
-                vis: import.vis,
                 path,
                 alias: import.alias,
             }),

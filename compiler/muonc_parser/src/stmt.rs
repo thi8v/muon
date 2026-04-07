@@ -124,9 +124,7 @@ impl Parser {
 
     /// Parses a directive statement
     pub fn parse_directive_stmt(&mut self) -> ReResult<Stmt> {
-        let vis = self.parse_vis();
-
-        let directive = tri!(self.parse_directive(vis));
+        let directive = tri!(self.parse_directive());
 
         Ok(Stmt {
             span: directive.span(),

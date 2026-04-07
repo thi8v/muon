@@ -19,7 +19,6 @@ use std::array;
 use crate::{hir::*, *};
 
 use muonc_entity::EntityMap;
-use muonc_middle::ast::Visibility;
 use muonc_span::prelude::*;
 
 macro_rules! mk_visitor {
@@ -119,8 +118,8 @@ macro_rules! mk_visitor {
                 self.super_directive(directive);
             }
 
-            fn visit_import(&mut self, vis: Visibility, path: PathId, alias: Option<Identifier>) {
-                self.super_import(vis, path, alias);
+            fn visit_import(&mut self, path: PathId, alias: Option<Identifier>) {
+                self.super_import(path, alias);
             }
 
             // the default behavior of the visitor, they should never be
@@ -140,8 +139,8 @@ macro_rules! mk_visitor {
                 let mod_node = select_mut!($($mut)?; EntityMap::get_mut, EntityMap::get)(& $($mut)? owner.nodes, NodeId::ZERO);
 
                 let (
-                    Node::Package(Mod { vis: _, ref items, span })
-                    | Node::Item(Item { kind: ItemKind::Directive(Directive::Mod(_, Mod { vis: _, ref items, span })), ..})
+                    Node::Package(Mod {  ref items, span })
+                    | Node::Item(Item { kind: ItemKind::Directive(Directive::Mod(_, Mod { ref items, span })), ..})
                 ) = *mod_node else {
                     unreachable!("not a module");
                 };
@@ -165,7 +164,7 @@ macro_rules! mk_visitor {
             }
 
             fn super_fundef(&mut self, fundef: ItemId) {
-                let Item { kind: ItemKind::Fundef(Fundef { vis: _, name, sig: _, body }), span } = *self.pkg().get_item(fundef) else {
+                let Item { kind: ItemKind::Fundef(Fundef { name, sig: _, body }), span } = *self.pkg().get_item(fundef) else {
                     unreachable!("not a function definition");
                 };
 
@@ -370,7 +369,7 @@ macro_rules! mk_visitor {
             }
 
             fn super_fundecl(&mut self, fundecl: ItemId) {
-                let Item { kind: ItemKind::Fundecl(Fundecl { vis: _, name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
+                let Item { kind: ItemKind::Fundecl(Fundecl {  name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
                     unreachable!("not a function declaration");
                 };
 
@@ -382,7 +381,7 @@ macro_rules! mk_visitor {
             }
 
             fn super_globdef(&mut self, globdef: ItemId) {
-                let Item { kind: ItemKind::Globdef(Globdef { vis: _, mutability: _, name, typ, expr }), span } = *self.pkg().get_item(globdef) else {
+                let Item { kind: ItemKind::Globdef(Globdef { mutability: _, name, typ, expr }), span } = *self.pkg().get_item(globdef) else {
                     unreachable!("not a function declaration");
                 };
 
@@ -398,7 +397,7 @@ macro_rules! mk_visitor {
             }
 
             fn super_globdecl(&mut self, globdecl: ItemId) {
-                let Item { kind: ItemKind::Globdecl(Globdecl { vis: _, mutability: _, name, typ }), span } = *self.pkg().get_item(globdecl) else {
+                let Item { kind: ItemKind::Globdecl(Globdecl { mutability: _, name, typ }), span } = *self.pkg().get_item(globdecl) else {
                     unreachable!("not a global declaration");
                 };
 
@@ -431,18 +430,18 @@ macro_rules! mk_visitor {
                         self.visit_mod(directive.0);
                         return;
                     }
-                    Directive::Import { vis, ref path, alias } => {
+                    Directive::Import { ref path, alias } => {
                         let path = path.clone();
 
-                        self.visit_import(vis, path, alias);
+                        self.visit_import(path, alias);
                     }
                 }
 
                 self.visit_span(span);
             }
 
-            fn super_import(&mut self, vis: Visibility, path: PathId, alias: Option<Identifier>) {
-                self.visit_path(path, NameContext::Def(DefContext::Import(vis, alias)));
+            fn super_import(&mut self, path: PathId, alias: Option<Identifier>) {
+                self.visit_path(path, NameContext::Def(DefContext::Import(alias)));
             }
         }
     };
@@ -527,7 +526,7 @@ pub enum DefContext {
     Fundecl(DefId),
     Globdef(DefId),
     Globdecl(DefId),
-    Import(Visibility, Option<Identifier>),
+    Import(Option<Identifier>),
     Local(HirId<LocalId>),
 }
 

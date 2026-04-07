@@ -4,7 +4,7 @@ use std::fmt;
 
 use indexmap::IndexMap;
 use muonc_entity::{Entity, EntityMap, Opt, entity};
-use muonc_middle::ast::{Abi, BinOp, Mutability, PrimTy, UnOp, Visibility};
+use muonc_middle::ast::{Abi, BinOp, Mutability, PrimTy, UnOp};
 use muonc_span::prelude::*;
 use muonc_token::Lit;
 
@@ -622,8 +622,6 @@ impl NodeOwner {
 /// A Muon Module in HIR.
 #[derive(Debug, Clone)]
 pub struct Mod {
-    /// visibility of module.
-    pub vis: Visibility,
     /// the list of item ids this module owns.
     pub items: Vec<ItemId>,
     /// inner span of the module, see [`ast::Mod::span`].
@@ -634,9 +632,8 @@ pub struct Mod {
 
 impl Mod {
     /// Create a new module.
-    pub fn new(vis: Visibility, span: Span) -> Mod {
+    pub fn new(span: Span) -> Mod {
         Mod {
-            vis,
             items: vec![],
             span,
         }
@@ -702,7 +699,6 @@ impl ItemKind {
 /// A Muon fundef in HIR
 #[derive(Debug, Clone)]
 pub struct Fundef {
-    pub vis: Visibility,
     pub name: Identifier,
     pub sig: Sig,
     pub body: BlockId,
@@ -751,7 +747,6 @@ impl TryFrom<Node> for Param {
 /// A Muon function declaration in HIR
 #[derive(Debug, Clone)]
 pub struct Fundecl {
-    pub vis: Visibility,
     pub name: Identifier,
     pub sig: Sig,
 }
@@ -759,7 +754,6 @@ pub struct Fundecl {
 /// A Muon global definition in HIR
 #[derive(Debug, Clone)]
 pub struct Globdef {
-    pub vis: Visibility,
     pub mutability: Mutability,
     pub name: Identifier,
     pub typ: Opt<TypId>,
@@ -769,7 +763,6 @@ pub struct Globdef {
 /// A Muon global declaration in HIR
 #[derive(Debug, Clone)]
 pub struct Globdecl {
-    pub vis: Visibility,
     pub mutability: Mutability,
     pub name: Identifier,
     pub typ: TypId,
@@ -789,7 +782,6 @@ pub enum Directive {
     Mod(Identifier, Mod),
     /// Import directive
     Import {
-        vis: Visibility,
         path: PathId,
         alias: Option<Identifier>,
     },

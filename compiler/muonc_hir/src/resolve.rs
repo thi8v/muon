@@ -495,8 +495,7 @@ impl<'hir> MutVisitor for Resolver<'hir> {
             DefContext::Globdecl(defid) => {
                 self.bind(ident.name, Res::Def(DefKind::Glob, defid), Namespace::Value);
             }
-            DefContext::Import(vis, alias) => {
-                _ = vis;
+            DefContext::Import(alias) => {
                 _ = alias;
 
                 todo!("IMPORT")
