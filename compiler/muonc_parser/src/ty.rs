@@ -54,11 +54,11 @@ impl Parser {
 
         let mutability = self.parse_mutability();
 
-        let typ = Box::new(tri!(self.parse_type()));
-        let hi = typ.span;
+        let ty = Box::new(tri!(self.parse_type()));
+        let hi = ty.span;
 
         Ok(Type {
-            kind: TypeKind::Pointer(mutability, typ),
+            kind: TypeKind::Pointer(mutability, ty),
             span: Span::join(lo, hi),
         })
     }
@@ -73,9 +73,9 @@ impl Parser {
         } = tri!(self.parse_parenthesized(Parser::parse_type));
 
         let (hi, ret) = if self.eat_no_expect(ExpToken::MinusGt) {
-            let typ = Box::new(tri!(self.parse_type()));
+            let ty = Box::new(tri!(self.parse_type()));
 
-            (typ.span, Some(typ))
+            (ty.span, Some(ty))
         } else {
             (hi_paren, None)
         };

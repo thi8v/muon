@@ -119,6 +119,7 @@ impl Identifier {
             name.can_identifier() || name.is_keyword(),
             "cannot create an identifier with a symbol that can't be an identifier."
         );
+
         Self { name, span }
     }
 

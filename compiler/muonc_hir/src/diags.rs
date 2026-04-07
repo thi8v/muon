@@ -1,4 +1,4 @@
-//! Diagnostic emited at the HIR stage of Muonc.
+//! Diagnostic emitted at the HIR stage of Muonc.
 
 use std::path::PathBuf;
 

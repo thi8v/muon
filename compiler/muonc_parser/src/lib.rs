@@ -24,7 +24,7 @@ pub mod expr;
 pub mod item;
 pub mod pretty;
 pub mod stmt;
-pub mod typ;
+pub mod ty;
 
 /// A parsing function.
 pub type ParsingFn<T> = fn(&mut Parser) -> ReResult<T>;
@@ -403,7 +403,7 @@ impl Parser {
                 // NOTE: in recovery we sometime try to have an ident that we
                 // didn't had so here we are sending a dummy value.
 
-                Identifier::new(sym::dummy, span)
+                Identifier::new(sym::Muon, span)
             }
             _ => {
                 unreachable!()

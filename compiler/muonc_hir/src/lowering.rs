@@ -18,7 +18,7 @@ use crate::{
     hir::{
         self, BindingDef, BindingId, BlockId, ExprId, GenId, GenTrace, HirId, ItemId, LabelId,
         LocalId, LocalKind, MaybeOwner, NodeId, NodeOwner, NodeType, OwnerId, ParamId, PathId,
-        PathSegmentId, StmtId, TypId,
+        PathSegmentId, StmtId, TyId,
     },
 };
 
@@ -168,8 +168,8 @@ impl LoweringCtx {
 
 /// Make HIR Nodes Methods
 ///
-/// *NB: every `mk_` and `reserve_` methods that return a `NodeId` or an alias
-/// type (like `BlockId`, `TypId`, `ExprId`, etc.) is local to the cursor
+/// *NB: every `mk_` and `reserve_` methods that return a `NodeId` or an
+/// alias type (like `BlockId`, `TyId`, `ExprId`, etc.) is local to the cursor
 /// (`HirCtx::cursor`) and if the node created owns items it will create the
 /// owner.*
 impl LoweringCtx {
@@ -277,7 +277,7 @@ impl LoweringCtx {
 
     /// Make a `Node::Param`.
     #[must_use]
-    pub fn mk_param(&mut self, name: Identifier, typ: TypId, span: Span) -> ParamId {
+    pub fn mk_param(&mut self, name: Identifier, ty: TyId, span: Span) -> ParamId {
         self.mk_node_many(|[local_id, param_id]| {
             let local = hir::Node::Local(hir::Local {
                 name,
@@ -287,7 +287,7 @@ impl LoweringCtx {
 
             let param = hir::Node::Param(hir::Param {
                 name,
-                typ,
+                ty,
                 span,
                 local: local_id.to_local_id(),
             });
@@ -299,9 +299,9 @@ impl LoweringCtx {
 
     /// Make a `Node::Type`.
     #[must_use]
-    pub fn mk_type(&mut self, kind: hir::TypeKind, span: Span) -> TypId {
+    pub fn mk_type(&mut self, kind: hir::TypeKind, span: Span) -> TyId {
         self.mk_node(hir::Node::Type(hir::Type { kind, span }))
-            .to_typ_id()
+            .to_ty_id()
     }
 
     /// Make a `Node::Stmt`.
@@ -552,8 +552,8 @@ impl LoweringCtx {
         let mut hir_params = Vec::with_capacity(params.len());
 
         for param in params {
-            let typ = self.lower_type(&param.typ);
-            hir_params.push(self.mk_param(param.name, typ, param.span));
+            let ty = self.lower_type(&param.ty);
+            hir_params.push(self.mk_param(param.name, ty, param.span));
         }
 
         let hir_ret = self.lower_otype(ret.as_ref());
@@ -566,8 +566,8 @@ impl LoweringCtx {
     }
 
     /// Lower a type
-    pub fn lower_type(&mut self, typ: &ast::Type) -> hir::TypId {
-        let kind = match typ.kind {
+    pub fn lower_type(&mut self, ty: &ast::Type) -> hir::TyId {
+        let kind = match ty.kind {
             ast::TypeKind::Path(ref path) => hir::TypeKind::Path(self.lower_path(path)),
             ast::TypeKind::Pointer(mutability, ref pointee) => {
                 let pointee = self.lower_type(pointee);
@@ -587,7 +587,7 @@ impl LoweringCtx {
             }
         };
 
-        self.mk_type(kind, typ.span)
+        self.mk_type(kind, ty.span)
     }
 
     /// Lower a block
@@ -610,8 +610,8 @@ impl LoweringCtx {
         let stmt_id = self.reserve_stmt(stmt.span);
 
         let kind = match stmt.kind {
-            ast::StmtKind::BindingDef(mutability, name, ref typ, ref expr) => {
-                let ty = self.lower_otype(typ.as_ref());
+            ast::StmtKind::BindingDef(mutability, name, ref ty, ref expr) => {
+                let ty = self.lower_otype(ty.as_ref());
                 let expr = self.lower_oexpr(expr.as_ref());
 
                 let [_, binding_id] = self.mk_node_many(|[local_id, binding_id]| {
@@ -879,11 +879,11 @@ impl LoweringCtx {
 
                 hir::ExprKind::Field(op, *member)
             }
-            ast::ExprKind::Cast(expr, typ) => {
+            ast::ExprKind::Cast(expr, ty) => {
                 let expr = tri!(self.lower_expr(expr));
-                let typ = self.lower_type(typ);
+                let ty = self.lower_type(ty);
 
-                hir::ExprKind::Cast(expr, typ)
+                hir::ExprKind::Cast(expr, ty)
             }
         };
 
@@ -955,8 +955,8 @@ impl LoweringCtx {
     }
 
     /// Lower an optional type
-    pub fn lower_otype(&mut self, typ: Option<&ast::Type>) -> Opt<TypId> {
-        Opt::from(typ.map(|typ| self.lower_type(typ)))
+    pub fn lower_otype(&mut self, ty: Option<&ast::Type>) -> Opt<TyId> {
+        Opt::from(ty.map(|ty| self.lower_type(ty)))
     }
 
     /// Lower an optional expr
@@ -985,14 +985,14 @@ impl LoweringCtx {
 
     /// Lower a global definition.
     pub fn lower_globdef(&mut self, globdef: &ast::Globdef) -> ReResult<ItemId> {
-        let typ = self.lower_otype(globdef.typ.as_ref());
+        let ty = self.lower_otype(globdef.ty.as_ref());
         let expr = tri!(self.lower_expr(&globdef.expr));
 
         Ok(self.mk_item(
             hir::ItemKind::Globdef(hir::Globdef {
                 mutability: globdef.mutability,
                 name: globdef.name,
-                typ,
+                ty,
                 expr,
             }),
             globdef.span,
@@ -1001,13 +1001,13 @@ impl LoweringCtx {
 
     /// Lower a global declaration.
     pub fn lower_globdecl(&mut self, globdecl: &ast::Globdecl) -> ItemId {
-        let typ = self.lower_type(&globdecl.typ);
+        let ty = self.lower_type(&globdecl.ty);
 
         self.mk_item(
             hir::ItemKind::Globdecl(hir::Globdecl {
                 mutability: globdecl.mutability,
                 name: globdecl.name,
-                typ,
+                ty,
             }),
             globdecl.span,
         )

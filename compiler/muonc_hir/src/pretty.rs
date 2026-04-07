@@ -80,7 +80,7 @@ impl PrettyDump<PkgDumper> for StmtId {
     }
 }
 
-impl PrettyDump<PkgDumper> for TypId {
+impl PrettyDump<PkgDumper> for TyId {
     fn try_dump(&self, ctx: &mut PrettyCtxt, _: &PkgDumper) -> io::Result<()> {
         write!(ctx.out, "ty{}", self.index())
     }
@@ -278,7 +278,7 @@ impl PrettyDump<PkgDumper> for Globdef {
         let Globdef {
             mutability,
             name,
-            typ,
+            ty,
             expr,
         } = self;
 
@@ -289,7 +289,7 @@ impl PrettyDump<PkgDumper> for Globdef {
             {
                 mutability,
                 name,
-                typ,
+                ty,
                 expr,
             }
         }
@@ -303,7 +303,7 @@ impl PrettyDump<PkgDumper> for Globdecl {
         let Globdecl {
             mutability,
             name,
-            typ,
+            ty,
         } = self;
 
         pretty_struct! {
@@ -313,7 +313,7 @@ impl PrettyDump<PkgDumper> for Globdecl {
             {
                 mutability,
                 name,
-                typ,
+                ty,
             }
         }
 
@@ -436,7 +436,7 @@ impl PrettyDump<PkgDumper> for Param {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         let Param {
             name,
-            typ,
+            ty,
             span,
             local,
         } = self;
@@ -447,7 +447,7 @@ impl PrettyDump<PkgDumper> for Param {
             "Param",
             {
                 name,
-                typ,
+                ty,
                 local,
             },
             span

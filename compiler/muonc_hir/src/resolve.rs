@@ -160,7 +160,7 @@ impl<'hir> Resolver<'hir> {
         self.pkg.mut_node(hir_id)
     }
 
-    /// Get the scope of the childs.
+    /// Get the scope of the children.
     pub fn child_scope(&mut self, res: &Res) -> Option<Scope> {
         match *res {
             Res::Def(kind, def) => kind.can_child().then_some(Scope { def, kind }),
@@ -427,7 +427,7 @@ impl<'hir> Resolver<'hir> {
             segments,
             span: _,
         } = self.get_node(path);
-        let mut res = String::with_capacity(segments.len() * 6); // euristic
+        let mut res = String::with_capacity(segments.len() * 6); // heuristic
 
         for (i, seg) in segments.iter().enumerate() {
             let PathSegment {

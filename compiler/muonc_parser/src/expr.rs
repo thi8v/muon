@@ -840,11 +840,11 @@ impl Parser {
 
         self.expect(ExpToken::KwAs).discard();
 
-        let typ = tri!(self.parse_type());
-        let hi = typ.span;
+        let ty = tri!(self.parse_type());
+        let hi = ty.span;
 
         Ok(Expr {
-            kind: ExprKind::Cast(operand, typ),
+            kind: ExprKind::Cast(operand, ty),
             span: Span::join(lo, hi),
         })
     }

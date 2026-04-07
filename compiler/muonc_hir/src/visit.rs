@@ -9,8 +9,8 @@
 //! - `super_foo`, by default will deconstruct the `foo` and call the
 //!   appropriate `visit_*` methods on each of its fields.
 //!
-//! This let's you overide `visit_foo` for types you are interested in and then
-//! call `super_foo` in the overriden `visit_foo` to get the default behavior.
+//! This let's you override `visit_foo` for types you are interested in and then
+//! call `super_foo` in the overridden `visit_foo` to get the default behavior.
 //!
 //! *heavily inspired by `rustc_middle::mir::visit`.*
 
@@ -70,7 +70,7 @@ macro_rules! mk_visitor {
                 self.super_param(param);
             }
 
-            fn visit_type(&mut self, ty: TypId) {
+            fn visit_type(&mut self, ty: TyId) {
                 self.super_type(ty);
             }
 
@@ -123,7 +123,7 @@ macro_rules! mk_visitor {
             }
 
             // the default behavior of the visitor, they should never be
-            // overriden.
+            // overridden.
 
             fn super_package(&mut self) {
                 *self.cur() = OwnerId(DefId::PACKAGE_DEF);
@@ -188,17 +188,17 @@ macro_rules! mk_visitor {
                 let hirid = self.mk_id(param);
 
                 // NB: we don't visit the local because we don't need to.
-                let Param { name, typ, span, local } = *self.pkg().get_node(hirid);
+                let Param { name, ty, span, local } = *self.pkg().get_node(hirid);
 
                 let local = self.mk_id(local);
                 self.visit_ident(name, DefContext::Local(local));
 
-                self.visit_type(typ);
+                self.visit_type(ty);
 
                 self.visit_span(span);
             }
 
-            fn super_type(&mut self, ty: TypId) {
+            fn super_type(&mut self, ty: TyId) {
                 let hirid = self.mk_id(ty);
                 let Type { ref kind, span } = *self.pkg().get_node(hirid);
 
@@ -381,14 +381,14 @@ macro_rules! mk_visitor {
             }
 
             fn super_globdef(&mut self, globdef: ItemId) {
-                let Item { kind: ItemKind::Globdef(Globdef { mutability: _, name, typ, expr }), span } = *self.pkg().get_item(globdef) else {
+                let Item { kind: ItemKind::Globdef(Globdef { mutability: _, name, ty, expr }), span } = *self.pkg().get_item(globdef) else {
                     unreachable!("not a function declaration");
                 };
 
                 self.visit_ident(name, DefContext::Globdef(globdef.0));
 
-                if let Some(typ) = typ.expand() {
-                    self.visit_type(typ);
+                if let Some(ty) = ty.expand() {
+                    self.visit_type(ty);
                 }
 
                 self.visit_expr(expr);
@@ -397,13 +397,13 @@ macro_rules! mk_visitor {
             }
 
             fn super_globdecl(&mut self, globdecl: ItemId) {
-                let Item { kind: ItemKind::Globdecl(Globdecl { mutability: _, name, typ }), span } = *self.pkg().get_item(globdecl) else {
+                let Item { kind: ItemKind::Globdecl(Globdecl { mutability: _, name, ty }), span } = *self.pkg().get_item(globdecl) else {
                     unreachable!("not a global declaration");
                 };
 
                 self.visit_ident(name, DefContext::Globdecl(globdecl.0));
 
-                self.visit_type(typ);
+                self.visit_type(ty);
 
                 self.visit_span(span);
             }

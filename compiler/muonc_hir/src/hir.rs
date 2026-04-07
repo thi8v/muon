@@ -11,7 +11,7 @@ use muonc_token::Lit;
 /// Kind of definition in Muon
 #[derive(Debug, Clone, Copy)]
 pub enum DefKind {
-    /// Module kind of definiton
+    /// Module kind of definition
     ///
     /// `#mod ...`
     Mod,
@@ -165,7 +165,7 @@ entity! {
     pub struct BlockId = NodeId;
 
     /// [`NodeId`] but ensured by its type to point to a `Node::Type`.
-    pub struct TypId = NodeId;
+    pub struct TyId = NodeId;
 
     /// [`NodeId`] but ensured by its type to point to a `Node::Param`.
     pub struct ParamId = NodeId;
@@ -213,8 +213,8 @@ impl NodeId {
     }
 
     /// Convert this node id to a type id.
-    pub fn to_typ_id(self) -> TypId {
-        TypId(self)
+    pub fn to_ty_id(self) -> TyId {
+        TyId(self)
     }
 
     /// Convert this node id to a param id.
@@ -324,7 +324,7 @@ macro_rules! node_type_impl {
 
 node_type_impl!(
     BlockId => Block,
-    TypId => Type,
+    TyId => Type,
     ParamId => Param,
     ExprId => Expr,
     StmtId => Stmt,
@@ -370,7 +370,7 @@ impl<Id: fmt::Display + NodeType> fmt::Display for HirId<Id> {
 impl HirId {
     /// Make an HIR Id from the owner, always "points" to the item
     /// "representing" the owner, see [`OwnerId`] documentation for more
-    /// informations.
+    /// information.
     pub fn mk_owner(owner: OwnerId) -> HirId {
         HirId {
             owner,
@@ -708,7 +708,7 @@ pub struct Fundef {
 #[derive(Debug, Clone)]
 pub struct Sig {
     pub params: Vec<ParamId>,
-    pub ret: Opt<TypId>,
+    pub ret: Opt<TyId>,
     pub span: Span,
 }
 
@@ -727,7 +727,7 @@ impl Sig {
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: Identifier,
-    pub typ: TypId,
+    pub ty: TyId,
     pub span: Span,
     pub local: LocalId,
 }
@@ -756,7 +756,7 @@ pub struct Fundecl {
 pub struct Globdef {
     pub mutability: Mutability,
     pub name: Identifier,
-    pub typ: Opt<TypId>,
+    pub ty: Opt<TyId>,
     pub expr: ExprId,
 }
 
@@ -765,7 +765,7 @@ pub struct Globdef {
 pub struct Globdecl {
     pub mutability: Mutability,
     pub name: Identifier,
-    pub typ: TypId,
+    pub ty: TyId,
 }
 
 /// A Muon extern block in HIR
@@ -830,9 +830,9 @@ pub enum TypeKind {
     /// Path to a type
     Path(PathId),
     /// (Mutable) pointer.
-    Pointer(Mutability, TypId),
+    Pointer(Mutability, TyId),
     /// Function pointer.
-    Funptr(Vec<TypId>, Opt<TypId>),
+    Funptr(Vec<TyId>, Opt<TyId>),
 }
 
 /// A Muon block in HIR
@@ -879,7 +879,7 @@ impl TryFrom<Node> for Stmt {
 pub struct BindingDef(
     pub Mutability,
     pub Identifier,
-    pub Opt<TypId>,
+    pub Opt<TyId>,
     pub Opt<ExprId>,
     pub LocalId,
     pub Span,
@@ -972,7 +972,7 @@ pub enum ExprKind {
     /// a field expression (e.g: `x.a`)
     Field(ExprId, Identifier),
     /// a cast expression (e.g: `x as u32`)
-    Cast(ExprId, TypId),
+    Cast(ExprId, TyId),
 }
 
 /// A kind of label.

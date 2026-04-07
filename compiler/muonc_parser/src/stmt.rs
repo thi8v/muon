@@ -69,7 +69,7 @@ impl Parser {
 
         let name = self.as_ident();
 
-        let typ = if self.eat_no_expect(ExpToken::Colon) {
+        let ty = if self.eat_no_expect(ExpToken::Colon) {
             Some(tri!(self.parse_type()))
         } else {
             None
@@ -84,7 +84,7 @@ impl Parser {
         let hi = tri!(self.expect(ExpToken::Semi));
 
         Ok(Stmt {
-            kind: StmtKind::BindingDef(mutability, name, typ, val),
+            kind: StmtKind::BindingDef(mutability, name, ty, val),
             span: Span::join(lo, hi),
         })
     }

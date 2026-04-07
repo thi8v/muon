@@ -61,7 +61,7 @@ impl<E> PrettyDump<E> for Item {
             Item::Globdef(Globdef {
                 mutability,
                 name,
-                typ,
+                ty,
                 expr,
                 span,
             }) => {
@@ -72,7 +72,7 @@ impl<E> PrettyDump<E> for Item {
                     {
                         mutability,
                         name,
-                        typ,
+                        ty,
                         expr
                     },
                     span
@@ -83,7 +83,7 @@ impl<E> PrettyDump<E> for Item {
             Item::Globdecl(Globdecl {
                 mutability,
                 name,
-                typ,
+                ty,
                 span,
             }) => {
                 pretty_struct! {
@@ -93,7 +93,7 @@ impl<E> PrettyDump<E> for Item {
                     {
                         mutability,
                         name,
-                        typ,
+                        ty,
                     },
                     span
                 }
@@ -417,14 +417,14 @@ impl<E> PrettyDump<E> for ExprKind {
 
                 Ok(())
             }
-            ExprKind::Cast(operand, typ) => {
+            ExprKind::Cast(operand, ty) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Cast",
                     {
                         operand,
-                        typ,
+                        ty,
                     }
                 }
 
@@ -464,7 +464,7 @@ impl<E> PrettyDump<E> for Stmt {
 impl<E> PrettyDump<E> for StmtKind {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
-            StmtKind::BindingDef(mutability, name, typ, val) => {
+            StmtKind::BindingDef(mutability, name, ty, val) => {
                 pretty_struct! {
                     ctx,
                     extra,
@@ -472,7 +472,7 @@ impl<E> PrettyDump<E> for StmtKind {
                     {
                         mutability,
                         name,
-                        typ,
+                        ty,
                         val,
                     },
                 };
@@ -487,7 +487,7 @@ impl<E> PrettyDump<E> for StmtKind {
 
 impl<E> PrettyDump<E> for Param {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
-        let Param { name, typ, span } = self;
+        let Param { name, ty, span } = self;
 
         pretty_struct! {
             ctx,
@@ -495,7 +495,7 @@ impl<E> PrettyDump<E> for Param {
             "Param",
             {
                 name,
-                typ,
+                ty,
             },
             span
         }
@@ -517,14 +517,14 @@ impl<E> PrettyDump<E> for TypeKind {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
             TypeKind::Path(path) => path.try_dump(ctx, extra),
-            TypeKind::Pointer(mutability, typ) => {
+            TypeKind::Pointer(mutability, ty) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Pointer",
                     {
                         mutability,
-                        typ,
+                        ty,
                     }
                 }
 

@@ -51,7 +51,7 @@ pub struct Fundecl {
 pub struct Globdef {
     pub mutability: Mutability,
     pub name: Identifier,
-    pub typ: Option<Type>,
+    pub ty: Option<Type>,
     pub expr: Expr,
     pub span: Span,
 }
@@ -63,7 +63,7 @@ pub struct Globdef {
 pub struct Globdecl {
     pub mutability: Mutability,
     pub name: Identifier,
-    pub typ: Type,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -98,7 +98,7 @@ pub enum Item {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Identifier,
-    pub typ: Type,
+    pub ty: Type,
     pub span: Span,
 }
 
@@ -228,12 +228,12 @@ impl Parser {
 
         self.expect(ExpToken::Colon).discard();
 
-        let typ = tri!(self.parse_type());
-        let hi = typ.span;
+        let ty = tri!(self.parse_type());
+        let hi = ty.span;
 
         Ok(Param {
             name,
-            typ,
+            ty,
             span: Span::join(lo, hi),
         })
     }
@@ -320,17 +320,17 @@ impl Parser {
         let hi = tri!(self.expect(ExpToken::Semi));
 
         match (ty, expr) {
-            (typ, Some(expr)) => Ok(Item::Globdef(Globdef {
+            (ty, Some(expr)) => Ok(Item::Globdef(Globdef {
                 mutability: mutability.0,
                 name,
-                typ,
+                ty,
                 expr,
                 span: Span::join(lo, hi),
             })),
-            (Some(typ), None) => Ok(Item::Globdecl(Globdecl {
+            (Some(ty), None) => Ok(Item::Globdecl(Globdecl {
                 mutability: mutability.0,
                 name,
-                typ,
+                ty,
                 span: Span::join(lo, hi),
             })),
             (None, None) => unreachable!(),
