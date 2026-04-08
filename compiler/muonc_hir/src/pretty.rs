@@ -544,6 +544,11 @@ impl PrettyDump<PkgDumper> for StmtKind {
                 id.try_dump(ctx, extra)?;
             }
             StmtKind::Expr(expr) => {
+                write!(ctx.out, "expr: ")?;
+                expr.try_dump(ctx, extra)?;
+            }
+            StmtKind::Semi(expr) => {
+                write!(ctx.out, "semi: ")?;
                 expr.try_dump(ctx, extra)?;
             }
         }

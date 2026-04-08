@@ -639,6 +639,7 @@ impl LoweringCtx {
                 hir::StmtKind::Directive(tri!(self.lower_directive(directive)))
             }
             ast::StmtKind::Expr(ref expr) => hir::StmtKind::Expr(tri!(self.lower_expr(expr))),
+            ast::StmtKind::Semi(ref expr) => hir::StmtKind::Semi(tri!(self.lower_expr(expr))),
         };
 
         self.pop_stmt(stmt_id, kind);

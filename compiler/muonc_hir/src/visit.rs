@@ -12,6 +12,14 @@
 //! This let's you override `visit_foo` for types you are interested in and then
 //! call `super_foo` in the overridden `visit_foo` to get the default behavior.
 //!
+//! ## Events
+//!
+//! For now there is one event:
+//! - `on_scope`, it is called when we enter and leave a new scope.
+//!
+//! Events are used to override the behavior of the visitor but not re-writing
+//! half of it.
+//!
 //! *heavily inspired by `rustc_middle::mir::visit`.*
 
 use std::array;
@@ -37,6 +45,12 @@ macro_rules! mk_visitor {
                     owner: *self.cur(),
                     node_id,
                 }
+            }
+
+            // overriadble event handlers
+
+            fn on_scope(&mut self, event: ScopeEvent) {
+                _ = event;
             }
 
             // overridable `visit_*` methods, call the corresponding `super_*`
@@ -132,6 +146,8 @@ macro_rules! mk_visitor {
             }
 
             fn super_mod(&mut self, defid: DefId) {
+                self.on_scope(ScopeEvent::Enter); // mod scope
+
                 let MaybeOwner::Owner(owner) = get_maybe!($($mut)?; self.pkg(), ItemId(defid)) else {
                     unreachable!("defid doesn't point to an item owner");
                 };
@@ -148,6 +164,8 @@ macro_rules! mk_visitor {
                 visit_item!(@seq; self, items);
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // mod scope
             }
 
             fn super_span(&mut self, _span: Span) {}
@@ -170,6 +188,8 @@ macro_rules! mk_visitor {
 
                 self.visit_ident(name, DefContext::Fundef(fundef.0));
 
+                self.on_scope(ScopeEvent::Enter); // fundef scope
+
                 // we need to reborrow sig because of rust borrow checker.
                 let Item { kind: ItemKind::Fundef(Fundef { ref sig, .. }), .. } = *self.pkg().get_item(fundef) else {
                     unreachable!("not a function definition");
@@ -180,6 +200,8 @@ macro_rules! mk_visitor {
                 self.visit_block(body);
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // fundef scope
             }
 
             fn super_ident(&mut self, _ident: Identifier, _ctx: DefContext) {}
@@ -224,6 +246,8 @@ macro_rules! mk_visitor {
             }
 
             fn super_block(&mut self, block: BlockId) {
+                self.on_scope(ScopeEvent::Enter); // block scope
+
                 let hirid = self.mk_id(block);
                 let Block { ref stmts, tail, span } = *self.pkg().get_node(hirid);
 
@@ -236,6 +260,8 @@ macro_rules! mk_visitor {
                 }
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // block scope
             }
 
             fn super_path(&mut self, path: PathId, ctx: NameContext) {
@@ -256,7 +282,7 @@ macro_rules! mk_visitor {
                 match *kind {
                     StmtKind::BindingDef(binding) => self.visit_binding(binding),
                     StmtKind::Directive(item) => self.visit_item(item),
-                    StmtKind::Expr(expr) => self.visit_expr(expr),
+                    StmtKind::Expr(expr) | StmtKind::Semi(expr) => self.visit_expr(expr),
                 }
 
                 self.visit_span(span);
@@ -369,7 +395,9 @@ macro_rules! mk_visitor {
             }
 
             fn super_fundecl(&mut self, fundecl: ItemId) {
-                let Item { kind: ItemKind::Fundecl(Fundecl {  name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
+                self.on_scope(ScopeEvent::Enter); // fundecl scope
+
+                let Item { kind: ItemKind::Fundecl(Fundecl { name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
                     unreachable!("not a function declaration");
                 };
 
@@ -378,9 +406,13 @@ macro_rules! mk_visitor {
                 self.visit_ident(name, DefContext::Fundecl(fundecl.0));
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // fundecl scope
             }
 
             fn super_globdef(&mut self, globdef: ItemId) {
+                self.on_scope(ScopeEvent::Enter); // globdef scope
+
                 let Item { kind: ItemKind::Globdef(Globdef { mutability: _, name, ty, expr }), span } = *self.pkg().get_item(globdef) else {
                     unreachable!("not a function declaration");
                 };
@@ -394,9 +426,13 @@ macro_rules! mk_visitor {
                 self.visit_expr(expr);
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // globdef scope
             }
 
             fn super_globdecl(&mut self, globdecl: ItemId) {
+                self.on_scope(ScopeEvent::Enter); // globdecl scope
+
                 let Item { kind: ItemKind::Globdecl(Globdecl { mutability: _, name, ty }), span } = *self.pkg().get_item(globdecl) else {
                     unreachable!("not a global declaration");
                 };
@@ -406,6 +442,8 @@ macro_rules! mk_visitor {
                 self.visit_type(ty);
 
                 self.visit_span(span);
+
+                self.on_scope(ScopeEvent::Leave); // globdecl scope
             }
 
             fn super_extern(&mut self, extrn: ItemId) {
@@ -575,6 +613,13 @@ impl<T> PerNS<Option<T>> {
     pub fn empty(self) -> bool {
         self.type_ns.is_none() && self.value_ns.is_none()
     }
+}
+
+/// Scope event
+#[derive(Debug, Clone)]
+pub enum ScopeEvent {
+    Enter,
+    Leave,
 }
 
 mk_visitor!(Visitor);

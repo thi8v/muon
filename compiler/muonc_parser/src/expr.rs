@@ -358,7 +358,11 @@ impl Parser {
 
     /// Returns `"expression"` or `"statement"` if `Restrictions::EXPR_STMT` is true.
     pub fn expr_str(&self) -> &'static str {
-        "expression"
+        if self.restrictions.intersects(Restrictions::STMT_EXPR) {
+            "statement"
+        } else {
+            "expression"
+        }
     }
 
     /// Parses an expression with the appropriate precedence.

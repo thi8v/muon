@@ -11,7 +11,7 @@ use std::{
 use crate::{
     diags::{AmbiguousName, NameDefinedMultipleTimes, NotFoundInScope},
     hir::*,
-    visit::{DefContext, MutVisitor, NameContext, Namespace, PerNS},
+    visit::{DefContext, MutVisitor, NameContext, Namespace, PerNS, ScopeEvent},
 };
 use muonc_errors::prelude::*;
 use muonc_middle::ast::PrimTy;
@@ -470,12 +470,19 @@ impl<'hir> MutVisitor for Resolver<'hir> {
         &mut self.cur
     }
 
+    fn on_scope(&mut self, event: ScopeEvent) {
+        match event {
+            ScopeEvent::Enter => {
+                self.enter_scope();
+            }
+            ScopeEvent::Leave => {
+                self.leave_scope();
+            }
+        }
+    }
+
     fn visit_mod(&mut self, defid: DefId) {
-        self.enter_scope(); // mod scope
-
         self.super_mod(defid);
-
-        self.leave_scope(); // mod scope
     }
 
     fn visit_ident(&mut self, ident: Identifier, ctx: DefContext) {

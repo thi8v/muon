@@ -480,7 +480,20 @@ impl<E> PrettyDump<E> for StmtKind {
                 Ok(())
             }
             StmtKind::Directive(directive) => directive.try_dump(ctx, extra),
-            StmtKind::Expr(expr) => expr.try_dump(ctx, extra),
+            StmtKind::Expr(expr) => {
+                write!(ctx.out, "Expr(")?;
+                expr.try_dump(ctx, extra)?;
+                write!(ctx.out, ")")?;
+
+                Ok(())
+            }
+            StmtKind::Semi(expr) => {
+                write!(ctx.out, "Semi(")?;
+                expr.try_dump(ctx, extra)?;
+                write!(ctx.out, ")")?;
+
+                Ok(())
+            }
         }
     }
 }

@@ -914,8 +914,14 @@ pub enum StmtKind {
     BindingDef(BindingId),
     /// A directive
     Directive(ItemId),
-    /// An expression statement
+    /// Expression without a trailing semicolon.
+    ///
+    /// *The expression must have a type of `void`.*
     Expr(ExprId),
+    /// Expression with a trailing semicolon.
+    ///
+    /// *May have any type.*
+    Semi(ExprId),
 }
 
 /// A Muon expression in HIR

@@ -20,21 +20,15 @@ pub enum StmtKind {
     ///
     /// `directive`
     Directive(Directive),
-    /// Expression statement.
+    /// Expression without a trailing semicolon.
     ///
-    /// `expr_with_block ";"?` or
-    /// `expr_without_block ";"`
+    /// `expr_with_block`
     Expr(Expr),
-}
-
-impl StmtKind {
-    /// Returns `true` if the stmt kind is [`Expr`].
+    /// Expression with a trailing semicolon.
     ///
-    /// [`Expr`]: StmtKind::Expr
-    #[must_use]
-    pub fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr(..))
-    }
+    /// `expr_with_block ";"` or
+    /// `expr_without_block ";"`
+    Semi(Expr),
 }
 
 /// A Muon Block.
@@ -51,7 +45,7 @@ impl Parser {
     pub fn parse_stmt(&mut self, in_block: bool) -> ReResult<Stmt> {
         match self.token.tt {
             Kw(Keyword::Let) => self.parse_binding_stmt(),
-            Kw(Keyword::Pub) | Pound => self.parse_directive_stmt(),
+            Pound => self.parse_directive_stmt(),
             _ => {
                 // didn't recognized a statement, must be an expression statement
                 self.parse_expr_stmt(in_block)
@@ -95,29 +89,42 @@ impl Parser {
             tri!(self.with_restrictions(Restrictions::STMT_EXPR, |parser| parser.parse_expr()));
         let lo = expr.span;
 
+        let semi: bool;
+
         let hi = if expr.kind.contains_block() {
             if self.eat_no_expect(ExpToken::Semi) {
+                semi = true;
                 self.prev_token.span
             } else {
+                semi = false;
                 expr.span
             }
         } else {
             // all of this for the tail expression of a block
             if in_block {
                 if self.check(ExpToken::Semi) {
+                    semi = true;
+
                     self.bump();
                     self.token_span()
                 } else {
+                    semi = false;
+
                     self.expr_semi_diag = Some(self.expected_diag());
                     expr.span
                 }
             } else {
+                semi = true;
                 tri!(self.expect(ExpToken::Semi))
             }
         };
 
         Ok(Stmt {
-            kind: StmtKind::Expr(expr),
+            kind: if semi {
+                StmtKind::Semi(expr)
+            } else {
+                StmtKind::Expr(expr)
+            },
             span: Span::join(lo, hi),
         })
     }
@@ -155,21 +162,15 @@ impl Parser {
             };
 
             let curly = self.check_no_expect(ExpToken::RCurly);
-            let is_expr = stmt.kind.is_expr();
 
-            match (curly, is_expr, self.expr_semi_diag.take()) {
-                (true, true, _) => {
+            match (curly, &stmt.kind, self.expr_semi_diag.take()) {
+                (true, StmtKind::Expr(expr), diag) => {
                     // ... expr }
                     //         ^ we are here so:
-                    let Stmt {
-                        kind: StmtKind::Expr(expr),
-                        span: _,
-                    } = stmt
-                    else {
-                        unreachable!()
-                    };
 
-                    tail = Some(expr);
+                    debug_assert!(diag.is_some());
+
+                    tail = Some(expr.clone());
                     break;
                 }
                 (.., diag) => {
@@ -185,7 +186,7 @@ impl Parser {
                     //
                     // 3. ... stmt ...
                     //            ^ here
-                    //   if curly == fale && is_expr == false
+                    //   if curly == false && is_expr == false
                     //
                     // so:
 
