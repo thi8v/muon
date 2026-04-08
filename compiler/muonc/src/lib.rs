@@ -7,6 +7,7 @@ use std::{
     panic,
     path::PathBuf,
     process::{ExitCode, abort},
+    sync::Arc,
     thread,
     time::Instant,
 };
@@ -20,7 +21,7 @@ use muonc_errors::prelude::*;
 use muonc_lexer::Lexer;
 use muonc_middle::{
     kv::{KeyValue, KvPair},
-    session::mk_session,
+    session::{Session, mk_session},
     target::TargetTriple,
 };
 use muonc_parser::Parser;
@@ -93,10 +94,11 @@ pub struct MuonCli {
 }
 
 /// Compilation stages.
-#[derive(Debug, Clone, ValueEnum)]
+#[derive(Debug, Clone, ValueEnum, PartialEq, Eq, Hash)]
 pub enum CompStage {
     Lexer,
     Parser,
+    Hir,
 }
 
 from_value_enum!(CompStage);
@@ -143,6 +145,11 @@ impl DebugOptions {
     /// Does the options contains this compile result to print?
     pub fn contains_print(&self, res: CompResults) -> bool {
         self.print.contains(&res)
+    }
+
+    /// Does the options contains this compile stage to halt?
+    pub fn contains_halt(&self, stage: CompStage) -> bool {
+        self.halt.as_ref().is_some_and(|val| *val == stage)
     }
 }
 
@@ -211,7 +218,7 @@ pub fn run() -> Result<(), CliError> {
         );
         eprintln!(
             "  = note: muonc {version} ({commit} {date})",
-            version = env!("CARGO_PKG_VERSION"),
+            version = build::PKG_VERSION,
             commit = build::SHORT_COMMIT,
             date = build::COMMIT_DATE
         );
@@ -283,6 +290,18 @@ pub fn run() -> Result<(), CliError> {
         initial,
     );
 
+    let res = build(sess.clone(), input, &debug_opts);
+
+    sess.set_total_timings();
+
+    if debug_opts.timings {
+        eprint!("\n{}", sess.timings.lock().unwrap())
+    }
+
+    res
+}
+
+fn build(sess: Arc<Session>, input: PathBuf, debug_opts: &DebugOptions) -> Result<(), CliError> {
     let builderr = |guarantee: DiagGuaranteed| -> Result<(), CliError> {
         sess.emit_summary();
         sess.dcx.render();
@@ -291,6 +310,15 @@ pub fn run() -> Result<(), CliError> {
             guarantee,
             failed: sess.dcx.failed(),
         })
+    };
+
+    // use this closure to return early and check if we emitted diags and return
+    // the appropriate thing.
+    let check_dcx = || -> Result<(), CliError> {
+        match sess.dcx.has_emitted() {
+            Some(guarantee) => builderr(guarantee),
+            None => Ok(()),
+        }
     };
 
     // 2. register the source code file of the root module.
@@ -329,6 +357,11 @@ pub fn run() -> Result<(), CliError> {
 
     sess.elapsed_lexer();
 
+    //    maybe halt the compilation here
+    if debug_opts.contains_halt(CompStage::Lexer) {
+        return check_dcx();
+    }
+
     // 4. parses the root file
     let mut parser = Parser::new(tokenstream, sess.clone());
     let ast = match parser.produce().dere() {
@@ -344,6 +377,11 @@ pub fn run() -> Result<(), CliError> {
     }
 
     sess.elapsed_parser();
+
+    //    maybe halt the compilation here
+    if debug_opts.contains_halt(CompStage::Parser) {
+        return check_dcx();
+    }
 
     // 5. HIR, AST => HIR
     let mut lowerctx = LoweringCtx::new(sess.clone());
@@ -368,14 +406,10 @@ pub fn run() -> Result<(), CliError> {
 
     sess.elapsed_hir();
 
-    sess.set_total_timings();
-
-    if debug_opts.timings {
-        eprint!("\n{}", sess.timings.lock().unwrap())
+    //    maybe halt the compilation here
+    if debug_opts.contains_halt(CompStage::Hir) {
+        return check_dcx();
     }
 
-    match sess.dcx.has_emitted() {
-        Some(guarantee) => builderr(guarantee),
-        None => Ok(()),
-    }
+    check_dcx()
 }
