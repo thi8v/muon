@@ -26,13 +26,16 @@ use std::array;
 
 use crate::{hir::*, *};
 
-use muonc_entity::EntityMap;
+use muonc_entity::{Entity, EntityMap, Opt};
 use muonc_span::prelude::*;
 
 macro_rules! mk_visitor {
     ($visitor_name:ident $(, $mut:ident )? ) => {
         /// *See [module's documentation][crate::visit]*
         pub trait $visitor_name {
+            /// We call `pre_mod` before calling `super_mod`.
+            const PREVISIT: bool;
+
             /// Get the package being visited.
             fn pkg(&mut self) -> &$($mut)? hir::Package;
 
@@ -124,16 +127,14 @@ macro_rules! mk_visitor {
                 self.super_globdecl(globdecl);
             }
 
-            fn visit_extern(&mut self, extrn: ItemId) {
-                self.super_extern(extrn);
-            }
-
             fn visit_directive(&mut self, directive: ItemId) {
                 self.super_directive(directive);
             }
 
-            fn visit_import(&mut self, path: PathId, alias: Option<Identifier>) {
-                self.super_import(path, alias);
+            fn visit_import(&mut self, path: PathId, alias: Option<Identifier>, pre: bool) {
+                if !pre {
+                    self.super_import(path, alias, pre);
+                }
             }
 
             // the default behavior of the visitor, they should never be
@@ -148,6 +149,10 @@ macro_rules! mk_visitor {
             fn super_mod(&mut self, defid: DefId) {
                 self.on_scope(ScopeEvent::Enter); // mod scope
 
+                if Self::PREVISIT {
+                    self.pre_mod(defid);
+                }
+
                 let MaybeOwner::Owner(owner) = get_maybe!($($mut)?; self.pkg(), ItemId(defid)) else {
                     unreachable!("defid doesn't point to an item owner");
                 };
@@ -161,7 +166,7 @@ macro_rules! mk_visitor {
                     unreachable!("not a module");
                 };
 
-                visit_item!(@seq; self, items);
+                visit_item!(@seq; self, items, visit_item);
 
                 self.visit_span(span);
 
@@ -176,17 +181,18 @@ macro_rules! mk_visitor {
                     ItemKind::Fundecl(_) => self.visit_fundecl(item),
                     ItemKind::Globdef(_) => self.visit_globdef(item),
                     ItemKind::Globdecl(_) => self.visit_globdecl(item),
-                    ItemKind::Extern(_) => self.visit_extern(item),
                     ItemKind::Directive(_) => self.visit_directive(item),
                 }
             }
 
             fn super_fundef(&mut self, fundef: ItemId) {
-                let Item { kind: ItemKind::Fundef(Fundef { name, sig: _, body }), span } = *self.pkg().get_item(fundef) else {
+                let Item { kind: ItemKind::Fundef(Fundef { abi: _, name, sig: _, body }), span } = *self.pkg().get_item(fundef) else {
                     unreachable!("not a function definition");
                 };
 
-                self.visit_ident(name, DefContext::Fundef(fundef.0));
+                if !Self::PREVISIT {
+                    self.visit_ident(name, DefContext::Fundef(fundef.0));
+                }
 
                 self.on_scope(ScopeEvent::Enter); // fundef scope
 
@@ -397,13 +403,18 @@ macro_rules! mk_visitor {
             fn super_fundecl(&mut self, fundecl: ItemId) {
                 self.on_scope(ScopeEvent::Enter); // fundecl scope
 
-                let Item { kind: ItemKind::Fundecl(Fundecl { name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
+                let Item { kind: ItemKind::Fundecl(Fundecl { ext, name, ref sig }), span } = *self.pkg().get_item(fundecl) else {
                     unreachable!("not a function declaration");
                 };
 
+                // rn extern headers are not visited.
+                _ = ext;
+
                 visit_sig!(self, sig);
 
-                self.visit_ident(name, DefContext::Fundecl(fundecl.0));
+                if !Self::PREVISIT {
+                    self.visit_ident(name, DefContext::Fundecl(fundecl.0));
+                }
 
                 self.visit_span(span);
 
@@ -417,7 +428,9 @@ macro_rules! mk_visitor {
                     unreachable!("not a function declaration");
                 };
 
-                self.visit_ident(name, DefContext::Globdef(globdef.0));
+                if !Self::PREVISIT {
+                    self.visit_ident(name, DefContext::Globdef(globdef.0));
+                }
 
                 if let Some(ty) = ty.expand() {
                     self.visit_type(ty);
@@ -433,27 +446,22 @@ macro_rules! mk_visitor {
             fn super_globdecl(&mut self, globdecl: ItemId) {
                 self.on_scope(ScopeEvent::Enter); // globdecl scope
 
-                let Item { kind: ItemKind::Globdecl(Globdecl { mutability: _, name, ty }), span } = *self.pkg().get_item(globdecl) else {
+                let Item { kind: ItemKind::Globdecl(Globdecl { ext, mutability: _, name, ty }), span } = *self.pkg().get_item(globdecl) else {
                     unreachable!("not a global declaration");
                 };
 
-                self.visit_ident(name, DefContext::Globdecl(globdecl.0));
+                // rn extern headers are not visited.
+                _ = ext;
+
+                if !Self::PREVISIT {
+                    self.visit_ident(name, DefContext::Globdecl(globdecl.0));
+                }
 
                 self.visit_type(ty);
 
                 self.visit_span(span);
 
                 self.on_scope(ScopeEvent::Leave); // globdecl scope
-            }
-
-            fn super_extern(&mut self, extrn: ItemId) {
-                let Item { kind: ItemKind::Extern(Extern { abi: _, ref items }), span } = *self.pkg().get_item(extrn) else {
-                    unreachable!("not an extern block");
-                };
-
-                visit_item!(@seq; self, items);
-
-                self.visit_span(span);
             }
 
             fn super_directive(&mut self, directive: ItemId) {
@@ -463,46 +471,99 @@ macro_rules! mk_visitor {
 
                 match *dir {
                     Directive::Mod(name, _) => {
-                        self.visit_ident(name, DefContext::Mod(directive.0));
+                        if !Self::PREVISIT {
+                            self.visit_ident(name, DefContext::Mod(directive.0));
+                        }
 
                         self.visit_mod(directive.0);
                         return;
                     }
-                    Directive::Import { ref path, alias } => {
-                        let path = path.clone();
-
-                        self.visit_import(path, alias);
+                    Directive::Import { path, alias } => {
+                        self.visit_import(path, alias, false);
                     }
                 }
 
                 self.visit_span(span);
             }
 
-            fn super_import(&mut self, path: PathId, alias: Option<Identifier>) {
+            fn super_import(&mut self, path: PathId, alias: Option<Identifier>, _pre: bool) {
                 self.visit_path(path, NameContext::Def(DefContext::Import(alias)));
+            }
+
+            // overridable `pre_*` methods, call the corresponding `super_pre_*`
+            // by default; by default they are called by the `super_*`
+
+            fn pre_mod(&mut self, defid: DefId) {
+                self.super_pre_mod(defid);
+            }
+
+            fn pre_item(&mut self, item: ItemId) {
+                self.super_pre_item(item);
+            }
+
+            // default behavior of the pre-visitor should not be overriden
+
+            fn super_pre_mod(&mut self, defid: DefId) {
+                let MaybeOwner::Owner(owner) = get_maybe!($($mut)?; self.pkg(), ItemId(defid)) else {
+                    unreachable!("defid doesn't point to an item owner");
+                };
+
+                let mod_node = select_mut!($($mut)?; EntityMap::get_mut, EntityMap::get)(& $($mut)? owner.nodes, NodeId::ZERO);
+
+                let (
+                    Node::Package(Mod {  ref items, span: _ })
+                    | Node::Item(Item { kind: ItemKind::Directive(Directive::Mod(_, Mod { ref items, span: _ })), ..})
+                ) = *mod_node else {
+                    unreachable!("not a module");
+                };
+
+                visit_item!(@seq; self, items, pre_item);
+            }
+
+            fn super_pre_item(&mut self, item: ItemId) {
+                match self.pkg().get_item(item).kind {
+                    ItemKind::Fundef(Fundef { name, .. }) => {
+                        self.visit_ident(name, DefContext::Fundef(item.0));
+                    }
+                    ItemKind::Fundecl(Fundecl { name, .. }) => {
+                        self.visit_ident(name, DefContext::Fundecl(item.0));
+                    }
+                    ItemKind::Globdef(Globdef { name, .. }) => {
+                        self.visit_ident(name, DefContext::Globdef(item.0));
+                    }
+                    ItemKind::Globdecl(Globdecl { name, .. }) => {
+                        self.visit_ident(name, DefContext::Globdecl(item.0));
+                    }
+                    ItemKind::Directive(Directive::Mod(name, _)) => {
+                        self.visit_ident(name, DefContext::Mod(item.0));
+                    }
+                    ItemKind::Directive(Directive::Import { path, alias }) => {
+                        self.visit_import(path, alias, true);
+                    }
+                }
             }
         }
     };
 }
 
 macro_rules! visit_item {
-    (@seq; $self:expr, $items:expr) => {
+    (@seq; $self:expr, $items:expr, $method:ident) => {
         for item in $items.clone() {
-            visit_item!($self, item);
+            visit_item!($self, item, $method);
         }
     };
-    ($self:expr, $item:expr) => {
+    ($self:expr, $item:expr, $method:ident) => {
         let item = $self.pkg().get_item($item);
 
         if item.kind.can_own() {
             let old = *$self.cur();
             *$self.cur() = OwnerId($item.0);
 
-            $self.visit_item($item);
+            $self.$method($item);
 
             *$self.cur() = old;
         } else {
-            $self.visit_item($item);
+            $self.$method($item);
         }
     };
 }
@@ -602,6 +663,23 @@ impl<T> PerNS<Option<T>> {
     /// An iterator over the present items
     pub fn present_items(self) -> impl Iterator<Item = T> {
         self.iter().flatten()
+    }
+
+    /// An iterator over the present items
+    pub fn present_items_ns(self) -> impl Iterator<Item = (T, Namespace)> {
+        self.iter_ns().filter_map(|(v, ns)| v.map(|v| (v, ns)))
+    }
+
+    /// Returns true if the PerNS is filled with `None`.
+    pub fn empty(self) -> bool {
+        self.type_ns.is_none() && self.value_ns.is_none()
+    }
+}
+
+impl<T: Entity> PerNS<Opt<T>> {
+    /// An iterator over the present items
+    pub fn present_items(self) -> impl Iterator<Item = T> {
+        self.iter().filter_map(|o| o.expand())
     }
 
     /// An iterator over the present items

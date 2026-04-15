@@ -165,6 +165,19 @@ pub struct Interner {
     id: AtomicU32,
 }
 
+pub fn has_no_duplicates(items: &[&'static str]) -> bool {
+    let mut items = items.to_vec();
+    items.sort_unstable();
+
+    for i in 1..items.len() {
+        if items[i - 1] == items[i] {
+            return false;
+        }
+    }
+
+    true
+}
+
 impl Interner {
     const INNER_INVALID: &'static str = if cfg!(debug_assertions) {
         "<INVALID!>"
@@ -176,6 +189,10 @@ impl Interner {
     pub fn with_predefined_symbols(predefined: &'static [&'static str]) -> Interner {
         // NOTE: here we make an exception, we do not allocate the strings
         // provided because we know they live forever, it saves sometime.
+        debug_assert!(
+            has_no_duplicates(predefined),
+            "the predefined symbols have duplicates!"
+        );
 
         let map = DashMap::with_capacity(predefined.len() + 1);
         let data = boxcar::Vec::with_capacity(predefined.len() + 1);
@@ -317,8 +334,6 @@ symbols! {
         module,
         function,
         global,
-        import,
-        extern_res = "extern",
     ],
 
     cstr = "cstr",

@@ -11,6 +11,7 @@ use muonc_utils::{
 use crate::{
     ast::{Extern, Fundecl, Fundef, Globdecl, Globdef, Import, ModDecl, ModDef, *},
     expr::{LabelDef, LabelUse},
+    item::ExternHeader,
 };
 
 impl<E> PrettyDump<E> for Mod {
@@ -25,6 +26,7 @@ impl<E> PrettyDump<E> for Item {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
         match self {
             Item::Fundef(Fundef {
+                ext_header,
                 name,
                 sig,
                 block,
@@ -35,6 +37,7 @@ impl<E> PrettyDump<E> for Item {
                     extra,
                     "Fundef",
                     {
+                        ext_header,
                         name,
                         sig,
                         block,
@@ -44,12 +47,18 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Fundecl(Fundecl { name, sig, span }) => {
+            Item::Fundecl(Fundecl {
+                ext_header,
+                name,
+                sig,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Fundecl",
                     {
+                        ext_header,
                         name,
                         sig,
                     },
@@ -100,13 +109,17 @@ impl<E> PrettyDump<E> for Item {
 
                 Ok(())
             }
-            Item::Extern(Extern { abi, items, span }) => {
+            Item::Extern(Extern {
+                header,
+                items,
+                span,
+            }) => {
                 pretty_struct! {
                     ctx,
                     extra,
                     "Extern",
                     {
-                        abi,
+                        header,
                         items,
                     },
                     span
@@ -116,6 +129,24 @@ impl<E> PrettyDump<E> for Item {
             }
             Item::Directive(directive) => directive.try_dump(ctx, extra),
         }
+    }
+}
+
+impl<E> PrettyDump<E> for ExternHeader {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &E) -> io::Result<()> {
+        let ExternHeader { abi, span } = self;
+
+        pretty_struct! {
+            ctx,
+            extra,
+            "ExtHeader",
+            {
+                abi,
+            },
+            span
+        }
+
+        Ok(())
     }
 }
 
@@ -494,6 +525,7 @@ impl<E> PrettyDump<E> for StmtKind {
 
                 Ok(())
             }
+            StmtKind::Empty => write!(ctx.out, "Empty"),
         }
     }
 }

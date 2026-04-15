@@ -15,4 +15,5 @@ muonc_token = { workspace = true }
 muonc_utils = { workspace = true }
 
 # other dependencies
+either = "1.15"
 indexmap = { workspace = true }

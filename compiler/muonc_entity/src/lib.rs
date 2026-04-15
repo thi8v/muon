@@ -78,11 +78,11 @@ pub trait Entity: Debug + Copy + PartialEq + Eq + Hash {
 /// # Example
 ///
 /// ```rust
-/// use lunc_entity::entity;
+/// use muonc_entity::entity;
 ///
-/// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-/// pub struct MyEntity(u32);
-/// entity!(MyEntity, i32);
+/// entity! {
+///     pub struct MyEntity {}
+/// }
 /// ```
 #[macro_export]
 macro_rules! entity {
@@ -392,11 +392,11 @@ impl<E: Entity, T: Debug> Debug for EntityMap<E, T> {
 /// # Example
 ///
 /// ```rust
-/// use lunc_entity::{entity, SparseMap, Entity};
+/// use muonc_entity::{entity, SparseMap, Entity};
 ///
-/// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-/// pub struct Node(u32);
-/// entity!(Node, ());
+/// entity! {
+///     pub struct Node {}
+/// }
 ///
 /// let mut map = SparseMap::<Node, i32>::new();
 /// let n = Node::new(10);
@@ -498,11 +498,11 @@ impl<E: Entity, V: Hash> Hash for SparseMap<E, V> {
 /// # Example
 ///
 /// ```rust
-/// use lunc_entity::{entity, TightMap, Entity};
+/// use muonc_entity::{entity, TightMap, Entity};
 ///
-/// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-/// pub struct Reg(u32);
-/// entity!(Reg, ());
+/// entity! {
+///     pub struct Reg {}
+/// }
 ///
 /// // default value is 0
 /// let mut tm = TightMap::<Reg, i32>::new();
@@ -699,11 +699,11 @@ impl Display for AnyId {
 /// # Example
 ///
 /// ```rust
-/// use lunc_entity::{entity, Opt, Entity};
+/// use muonc_entity::{entity, Opt, Entity};
 ///
-/// #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-/// pub struct Slot(u32);
-/// entity!(Slot, ());
+/// entity! {
+///     pub struct Slot {}
+/// }
 ///
 /// // None variant:
 /// let mut o: Opt<Slot> = Opt::None;

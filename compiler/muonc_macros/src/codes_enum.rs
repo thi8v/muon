@@ -112,7 +112,7 @@ pub(crate) fn codes_enum(input: TokenStream) -> TokenStream {
     let variant_count = parsed.variants.len();
     let docs = format!(
         "All of the documentations of the error codes, index it like that: \n```\
-        rust\n{name}::documentation(/* error code */ as usize);\n```"
+        no_run\n{name}::documentation(/* error code */ as usize);\n```"
     );
 
     let expanded = quote! {
@@ -126,7 +126,8 @@ pub(crate) fn codes_enum(input: TokenStream) -> TokenStream {
             /// Variant count.
             pub const VARIANT_COUNT: usize = #variant_count;
 
-            #[doc = #docs]
+            // #[doc = #docs]
+            #[cfg_attr(not(doctest), doc = #docs)]
             pub fn documentations() -> [&'static str; #variant_count] {
                 [#( #documentations )*]
             }

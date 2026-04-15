@@ -1,5 +1,6 @@
 //! Name resolution of HIR, the next stage after lowering.
 
+use either::Either;
 use indexmap::IndexMap;
 use muonc_utils::suggest_similar;
 use std::{
@@ -35,19 +36,32 @@ impl<'hir> Resolver<'hir> {
     /// Create a new name resolver.
     pub fn new(pkg: &'hir mut Package, dcx: DiagCtxt) -> Resolver<'hir> {
         // create the type namespace
-        let mut outer_ts =
-            TableEntry::from_iter(category_iter(categories::PRIMITIVE_RANGE).map(|sym| {
-                (
-                    sym,
-                    Res::from(PrimTy::from_symbol(sym).expect("the iterator is messed up")),
-                )
-            }));
+        let mut outer_ts = TableEntry::new();
 
-        outer_ts
-            .map
-            .insert(sym::Pkg, Res::Def(DefKind::Mod, DefId::PACKAGE_DEF));
+        let mut mk_res = |res: Res| -> HirId<ResId> {
+            HirId {
+                owner: OwnerId(DefId::PACKAGE_DEF),
+                node_id: pkg
+                    .mut_maybe(ItemId(DefId::PACKAGE_DEF))
+                    .unwrap_mut()
+                    .nodes
+                    .create(Node::Res(res))
+                    .to_res_id(),
+            }
+        };
 
-        let type_ns = SymbolTable::with_scope(outer_ts);
+        for sym in category_iter(categories::PRIMITIVE_RANGE) {
+            let res = mk_res(Res::PrimTy(
+                PrimTy::from_symbol(sym).expect("the iterator is messed up"),
+            ));
+
+            outer_ts.entries.insert(sym, Entry::new(res));
+        }
+
+        let res = mk_res(Res::Def(DefKind::Mod, DefId::PACKAGE_DEF));
+        outer_ts.entries.insert(sym::Pkg, Entry::new(res));
+
+        let type_ns = SymbolTable::with_entry(outer_ts);
 
         // create the value namespace
         let val_ns = SymbolTable::new();
@@ -88,7 +102,7 @@ impl<'hir> Resolver<'hir> {
     }
 
     /// Lookup in both namespaces.
-    pub fn lookup(&mut self, name: Symbol) -> PerNS<Option<Res>> {
+    pub fn lookup(&mut self, name: Symbol) -> PerNS<Option<HirId<ResId>>> {
         PerNS {
             type_ns: self.type_st.lookup(name),
             value_ns: self.value_st.lookup(name),
@@ -96,20 +110,23 @@ impl<'hir> Resolver<'hir> {
     }
 
     /// Bind `name` to `res` in the namespace `ns` at the current scope.
-    pub fn bind(&mut self, name: Symbol, res: Res, ns: Namespace) {
+    pub fn bind(&mut self, name: Symbol, res: HirId<ResId>, ns: Namespace) {
         let symtable = match ns {
             Namespace::Type => &mut self.type_st,
             Namespace::Value => &mut self.value_st,
         };
 
         if let Some(old_res) = symtable.lookup(name)
-            && !self.can_shadow(&res, &old_res)
+            && !self.can_shadow(res, old_res)
+            && self.pkg.ne_node(old_res, res)
         {
             self.dcx.emit(NameDefinedMultipleTimes {
                 name,
-                new_span: self.res_span(&res).expect("a definition always has a span"),
+                new_span: self
+                    .res_span(Either::Left(res))
+                    .expect("a definition always has a span"),
                 old_span: self
-                    .res_span(&old_res)
+                    .res_span(Either::Left(old_res))
                     .expect("a definition always has a span"),
             });
             return;
@@ -121,13 +138,16 @@ impl<'hir> Resolver<'hir> {
             Namespace::Value => &mut self.value_st,
         };
 
-        symtable.inner_mut().map.insert(name, res);
+        symtable.inner_mut().entries.insert(name, Entry::new(res));
     }
 
     /// Returns `true` if `new` can shadow `old`.
-    pub fn can_shadow(&self, new: &Res, old: &Res) -> bool {
+    pub fn can_shadow(&self, new: HirId<ResId>, old: HirId<ResId>) -> bool {
         // NOTE: for now it's super simple shadowing rules but it may be broaden
         // later.
+
+        let new = self.pkg.get_node(new);
+        let old = self.pkg.get_node(old);
 
         match (new, old) {
             (Res::Local(new_id), Res::Local(old_id)) => {
@@ -142,26 +162,24 @@ impl<'hir> Resolver<'hir> {
 
     /// Get a node located in the current owner.
     pub fn get_node<Id: NodeType>(&self, id: Id) -> &Id::NodeTy {
-        let hir_id = HirId {
+        self.pkg.get_node(HirId {
             owner: self.cur,
             node_id: id,
-        };
-
-        self.pkg.get_node(hir_id)
+        })
     }
 
     /// Mutable `get_node`.
     pub fn mut_node<Id: NodeType>(&mut self, id: Id) -> &mut Id::NodeTy {
-        let hir_id = HirId {
+        self.pkg.mut_node(HirId {
             owner: self.cur,
             node_id: id,
-        };
-
-        self.pkg.mut_node(hir_id)
+        })
     }
 
     /// Get the scope of the children.
-    pub fn child_scope(&mut self, res: &Res) -> Option<Scope> {
+    pub fn child_scope(&mut self, res: Either<HirId<ResId>, &Res>) -> Option<Scope> {
+        let res = res.right_or_else(|resid| self.pkg.get_node(resid));
+
         match *res {
             Res::Def(kind, def) => kind.can_child().then_some(Scope { def, kind }),
             Res::PrimTy(_) | Res::Local(_) => None,
@@ -175,7 +193,7 @@ impl<'hir> Resolver<'hir> {
         &mut self,
         scope: Scope,
         name: Symbol,
-        expected_ns: Namespace,
+        expected_ns: Option<Namespace>,
     ) -> Option<(DefId, DefKind)> {
         let MaybeOwner::Owner(owner) = self.pkg.get_maybe(ItemId(scope.def)) else {
             return None;
@@ -188,9 +206,7 @@ impl<'hir> Resolver<'hir> {
             let item = self.pkg.get_item(*item_id);
             let defkind = item.defkind();
 
-            if let Some(item_name) = item.name()
-                && item_name == name
-            {
+            if self.item_name(*item_id) == name {
                 matching_items.push((*item_id, defkind));
             }
         }
@@ -202,8 +218,12 @@ impl<'hir> Resolver<'hir> {
                 let mut matching_ns = Vec::new();
 
                 for (item, defkind) in matching_items {
-                    if self.namespace_of_item(item) == expected_ns {
-                        matching_ns.push((item, defkind));
+                    match expected_ns {
+                        Some(expected_ns) if self.namespace_of_item(item) == expected_ns => {
+                            matching_ns.push((item, defkind));
+                        }
+                        None => matching_ns.push((item, defkind)),
+                        Some(_) => {}
                     }
                 }
 
@@ -212,9 +232,9 @@ impl<'hir> Resolver<'hir> {
 
                     Some((item_id.0, defkind))
                 } else {
-                    // TODO: i don't know how to handle ambiguity right now so
-                    // it panics right now.
-                    todo!("AMBIGUITY")
+                    unreachable!(
+                        "can't have two items in the same scope and in the same namespace with the same name"
+                    )
                 }
             }
         }
@@ -229,37 +249,42 @@ impl<'hir> Resolver<'hir> {
             | ItemKind::Fundecl(_)
             | ItemKind::Globdef(_)
             | ItemKind::Globdecl(_) => Namespace::Value,
-            ItemKind::Extern(_) => Namespace::Type,
             ItemKind::Directive(ref directive) => match directive {
                 Directive::Mod(_, _) => Namespace::Type,
-                Directive::Import { .. } => todo!("NS OF IMPORT"),
+                Directive::Import { path, alias } => {
+                    let path = self.get_node(*path);
+                    dbg!(path);
+                    dbg!(alias);
+                    // todo!("NAMESPACE OF IMPORT");
+                    Namespace::Type
+                }
             },
         }
     }
 
     /// Tries to find a similar symbol in the current scope
     pub fn similar_in_scope(
-        &mut self,
+        &self,
         name: Symbol,
         expected_ns: Namespace,
-    ) -> Option<(Symbol, &Res)> {
-        for (type_entry, val_entry) in zip(&self.type_st.entries, &self.value_st.entries).rev() {
+    ) -> Option<(Symbol, HirId<ResId>)> {
+        for (type_entry, val_entry) in zip(&self.type_st.tables, &self.value_st.tables).rev() {
             match (
-                suggest_similar(name, type_entry.map.keys().copied()),
-                suggest_similar(name, val_entry.map.keys().copied()),
+                suggest_similar(name, type_entry.entries.keys().copied()),
+                suggest_similar(name, val_entry.entries.keys().copied()),
             ) {
                 (Some(similar), None) => {
-                    return Some((similar, type_entry.map.get(&similar).unwrap()));
+                    return Some((similar, type_entry.get(similar).unwrap()));
                 }
                 (None, Some(similar)) => {
-                    return Some((similar, val_entry.map.get(&similar).unwrap()));
+                    return Some((similar, val_entry.get(similar).unwrap()));
                 }
                 (Some(similar_type), Some(similar_value)) => match expected_ns {
                     Namespace::Type => {
-                        return Some((similar_type, type_entry.map.get(&similar_type).unwrap()));
+                        return Some((similar_type, type_entry.get(similar_type).unwrap()));
                     }
                     Namespace::Value => {
-                        return Some((similar_value, val_entry.map.get(&similar_value).unwrap()));
+                        return Some((similar_value, val_entry.get(similar_value).unwrap()));
                     }
                 },
                 (None, None) => {}
@@ -274,7 +299,7 @@ impl<'hir> Resolver<'hir> {
     pub fn resolve_path(
         &mut self,
         path: PathId,
-        expected_ns: Namespace,
+        expected_ns: Option<Namespace>,
     ) -> Result<Candidate, ResolveErr> {
         let Path {
             res: _,
@@ -311,18 +336,16 @@ impl<'hir> Resolver<'hir> {
             .lookup(name)
             .present_items_ns()
             .map(|(res, ns)| {
-                let child = self.child_scope(&res);
+                let child = self.child_scope(Either::Left(res));
 
-                Candidate::new(res, ns, child)
+                Candidate::new((res, self.pkg.get_node(res).clone()), ns, child)
             })
             .collect();
 
         if candidates.is_empty() {
             return Err(ResolveErr::NotFound {
                 seg_span: name_span,
-                similar: self
-                    .similar_in_scope(name, expected_ns)
-                    .map(|(similar, res)| (similar, res.to_symbol())),
+                similar: self.similar_not_found(expected_ns, name),
             });
         }
 
@@ -332,10 +355,14 @@ impl<'hir> Resolver<'hir> {
         for seg in seg_iter {
             next.clear();
             let PathSegment {
-                ident,
+                ident:
+                    Identifier {
+                        name,
+                        span: name_span,
+                    },
                 id: _,
-                res: _,
-            } = {
+                res: seg_res,
+            } = *{
                 let hir_id = HirId {
                     owner: self.cur,
                     node_id: seg,
@@ -344,20 +371,15 @@ impl<'hir> Resolver<'hir> {
                 self.pkg.mut_node(hir_id)
             };
 
-            let Identifier {
-                name,
-                span: name_span,
-            } = *ident;
-
             for cand in &mut candidates {
                 if let Some(child) = &cand.child
                     && let Some((defid, defkind)) =
                         self.lookup_pkg(child.clone(), name, expected_ns)
                 {
                     let res = Res::Def(defkind, defid);
-                    let child = self.child_scope(&res);
+                    let child = self.child_scope(Either::Right(&res));
 
-                    cand.push_res(res, self.namespace_of_item(ItemId(defid)), child);
+                    cand.push_res((seg_res, res), self.namespace_of_item(ItemId(defid)), child);
                     next.push(cand.clone());
                 }
             }
@@ -367,9 +389,7 @@ impl<'hir> Resolver<'hir> {
             if candidates.is_empty() {
                 return Err(ResolveErr::NotFound {
                     seg_span: name_span,
-                    similar: self
-                        .similar_in_scope(name, expected_ns)
-                        .map(|(similar, res)| (similar, res.to_symbol())),
+                    similar: self.similar_not_found(expected_ns, name),
                 });
             }
         }
@@ -381,8 +401,14 @@ impl<'hir> Resolver<'hir> {
                 let mut matching_ns = Vec::new();
 
                 for candidate in candidates {
-                    if candidate.ns == expected_ns {
-                        matching_ns.push(candidate);
+                    match expected_ns {
+                        Some(expected_ns) if candidate.ns == expected_ns => {
+                            matching_ns.push(candidate);
+                        }
+                        Some(_) => {}
+                        None => {
+                            matching_ns.push(candidate);
+                        }
                     }
                 }
 
@@ -397,27 +423,42 @@ impl<'hir> Resolver<'hir> {
         }
     }
 
+    fn similar_not_found(
+        &self,
+        expected_ns: Option<Namespace>,
+        name: Symbol,
+    ) -> Option<(Symbol, Symbol)> {
+        expected_ns.as_ref().and_then(|expected_ns| {
+            if let Some((similar, res)) = self.similar_in_scope(name, *expected_ns) {
+                let res = self.pkg.get_node(res);
+                Some((similar, res.to_symbol()))
+            } else {
+                None
+            }
+        })
+    }
+
     /// Apply a candidate to a path.
-    pub fn apply_candidate(&mut self, path: PathId, cand: Candidate) {
+    pub fn apply_candidate(&mut self, path: PathId, cand: &Candidate) {
         let Path {
             res,
-            segments,
+            ref segments,
             span: _,
-        } = self.mut_node(path);
-
-        *res = cand.res;
+        } = *self.get_node(path);
 
         debug_assert_eq!(segments.len(), cand.seg_res.len());
 
-        for (seg_id, new_res) in zip(segments.clone(), cand.seg_res) {
+        for (seg_id, new_res) in zip(segments.clone(), cand.seg_res.clone()) {
             let PathSegment {
                 ident: _,
                 id: _,
                 res,
-            } = self.mut_node(seg_id);
+            } = *self.get_node(seg_id);
 
-            *res = new_res;
+            *self.pkg.mut_node(res) = new_res;
         }
+
+        *self.pkg.mut_node(res) = cand.res.1.clone();
     }
 
     /// Renders a path to a string.
@@ -447,7 +488,9 @@ impl<'hir> Resolver<'hir> {
     }
 
     /// Get the span of a resolution.
-    pub fn res_span(&self, res: &Res) -> Option<Span> {
+    pub fn res_span(&self, res: Either<HirId<ResId>, &Res>) -> Option<Span> {
+        let res = res.right_or_else(|resid| self.pkg.get_node(resid));
+
         match *res {
             Res::Def(_, defid) => Some(self.pkg.get_item(ItemId(defid)).span),
             Res::PrimTy(_) => None,
@@ -459,9 +502,58 @@ impl<'hir> Resolver<'hir> {
             Res::Unresolved => unreachable!(),
         }
     }
+
+    /// Get the last segment name
+    pub fn last_seg_name(&self, path: PathId) -> Symbol {
+        let Path {
+            res: _,
+            segments,
+            span: _,
+        } = self.get_node(path);
+
+        let last_seg = *segments
+            .last()
+            .expect("paths are always at least one segment long");
+
+        self.get_node(last_seg).ident.name
+    }
+
+    /// Get the name of an item.
+    pub fn item_name(&self, item_id: ItemId) -> Symbol {
+        let item = self.pkg.get_item(item_id);
+
+        match &item.kind {
+            ItemKind::Fundef(fundef) => fundef.name.name,
+            ItemKind::Fundecl(fundecl) => fundecl.name.name,
+            ItemKind::Globdef(globdef) => globdef.name.name,
+            ItemKind::Globdecl(globdecl) => globdecl.name.name,
+            ItemKind::Directive(directive) => match directive {
+                Directive::Mod(ident, _) => ident.name,
+                Directive::Import { path, alias } => alias
+                    .map(|ident| ident.name)
+                    .unwrap_or_else(|| self.last_seg_name(*path)),
+            },
+        }
+    }
+
+    /// Create a new Resolution in the current owner. (Self::cur)
+    fn mk_res(&mut self, res: Res) -> HirId<ResId> {
+        HirId {
+            owner: self.cur,
+            node_id: self
+                .pkg
+                .mut_maybe(ItemId(self.cur.0))
+                .unwrap_mut()
+                .nodes
+                .create(Node::Res(res))
+                .to_res_id(),
+        }
+    }
 }
 
 impl<'hir> MutVisitor for Resolver<'hir> {
+    const PREVISIT: bool = true;
+
     fn pkg(&mut self) -> &mut crate::hir::Package {
         self.pkg
     }
@@ -486,86 +578,96 @@ impl<'hir> MutVisitor for Resolver<'hir> {
     }
 
     fn visit_ident(&mut self, ident: Identifier, ctx: DefContext) {
-        match ctx {
-            DefContext::Mod(defid) => {
-                self.bind(ident.name, Res::Def(DefKind::Mod, defid), Namespace::Type);
+        let (res, ns) = match ctx {
+            DefContext::Mod(defid) => (Res::Def(DefKind::Mod, defid), Namespace::Type),
+            DefContext::Fundef(defid) => (Res::Def(DefKind::Fun, defid), Namespace::Value),
+            DefContext::Fundecl(defid) => (Res::Def(DefKind::Fun, defid), Namespace::Value),
+            DefContext::Globdef(defid) => (Res::Def(DefKind::Glob, defid), Namespace::Value),
+            DefContext::Globdecl(defid) => (Res::Def(DefKind::Glob, defid), Namespace::Value),
+            DefContext::Import(_) => {
+                unreachable!()
             }
-            DefContext::Fundef(defid) => {
-                self.bind(ident.name, Res::Def(DefKind::Fun, defid), Namespace::Value);
-            }
-            DefContext::Fundecl(defid) => {
-                self.bind(ident.name, Res::Def(DefKind::Fun, defid), Namespace::Value);
-            }
-            DefContext::Globdef(defid) => {
-                self.bind(ident.name, Res::Def(DefKind::Glob, defid), Namespace::Value);
-            }
-            DefContext::Globdecl(defid) => {
-                self.bind(ident.name, Res::Def(DefKind::Glob, defid), Namespace::Value);
-            }
-            DefContext::Import(alias) => {
-                _ = alias;
+            DefContext::Local(local) => (Res::Local(local), Namespace::Value),
+        };
 
-                todo!("IMPORT")
-            }
-            DefContext::Local(local) => {
-                self.bind(ident.name, Res::Local(local), Namespace::Value);
-            }
-        }
+        let res = self.mk_res(res);
+
+        self.bind(ident.name, res, ns);
     }
 
     fn visit_path(&mut self, path: PathId, ctx: NameContext) {
+        let expected_ns = match ctx {
+            NameContext::Use(ns) => Some(ns),
+            NameContext::Def(_) => None,
+        };
+
+        let candidate = match self.resolve_path(path, expected_ns) {
+            Ok(cand) => cand,
+            Err(ResolveErr::NotFound { seg_span, similar }) => {
+                let Path {
+                    res: _,
+                    segments: _,
+                    span: path_span,
+                } = *self.get_node(path);
+
+                let name = self
+                    .render_path(path)
+                    .expect("rendering the path is infallible");
+
+                self.dcx.emit(NotFoundInScope {
+                    seg_span,
+                    path_span,
+                    name,
+                    similar,
+                });
+
+                return;
+            }
+            Err(ResolveErr::Ambiguity { candidates }) => {
+                let Path {
+                    res: _,
+                    segments: _,
+                    span: path_span,
+                } = *self.get_node(path);
+
+                let name = self
+                    .render_path(path)
+                    .expect("rendering the path is infallible");
+
+                self.dcx.emit(AmbiguousName {
+                    name,
+                    primary: path_span,
+                    defs: candidates
+                        .iter()
+                        .map(|cand| {
+                            (
+                                cand.res.1.to_symbol(),
+                                self.res_span(Either::Right(&cand.res.1)),
+                            )
+                        })
+                        .collect(),
+                });
+
+                return;
+            }
+        };
+
+        self.apply_candidate(path, &candidate);
+
         match &ctx {
-            NameContext::Use(ns) => {
-                let candidate = match self.resolve_path(path, *ns) {
-                    Ok(cand) => cand,
-                    Err(ResolveErr::NotFound { seg_span, similar }) => {
-                        let Path {
-                            res: _,
-                            segments: _,
-                            span: path_span,
-                        } = *self.get_node(path);
-
-                        let name = self
-                            .render_path(path)
-                            .expect("rendering the path is infallible");
-
-                        self.dcx.emit(NotFoundInScope {
-                            seg_span,
-                            path_span,
-                            name,
-                            similar,
-                        });
-
-                        return;
-                    }
-                    Err(ResolveErr::Ambiguity { candidates }) => {
-                        let Path {
-                            res: _,
-                            segments: _,
-                            span: path_span,
-                        } = *self.get_node(path);
-
-                        let name = self
-                            .render_path(path)
-                            .expect("rendering the path is infallible");
-
-                        self.dcx.emit(AmbiguousName {
-                            name,
-                            primary: path_span,
-                            defs: candidates
-                                .iter()
-                                .map(|cand| (cand.res.to_symbol(), self.res_span(&cand.res)))
-                                .collect(),
-                        });
-
-                        return;
-                    }
+            NameContext::Use(_) => {}
+            NameContext::Def(defctx) => {
+                let DefContext::Import(alias) = defctx else {
+                    unreachable!();
                 };
 
-                self.apply_candidate(path, candidate);
-            }
-            NameContext::Def(_) => {
-                // TODO: ...
+                self.bind(
+                    alias
+                        .map(|ident| ident.name)
+                        .unwrap_or_else(|| self.last_seg_name(path)),
+                    candidate.res.0,
+                    candidate.ns,
+                );
             }
         }
 
@@ -576,62 +678,62 @@ impl<'hir> MutVisitor for Resolver<'hir> {
 /// Namespace, stores names in scopes
 #[derive(Clone)]
 pub struct SymbolTable {
-    entries: Vec<TableEntry>,
+    tables: Vec<TableEntry>,
 }
 
 impl SymbolTable {
     /// Create a new namespace with an empty scope
-    pub fn new() -> SymbolTable {
-        SymbolTable::with_scope(TableEntry::new())
+    fn new() -> SymbolTable {
+        SymbolTable::with_entry(TableEntry::new())
     }
 
     /// Creates a new namespace with `scope` as it's outer most scope.
-    pub fn with_scope(scope: TableEntry) -> SymbolTable {
+    pub fn with_entry(scope: TableEntry) -> SymbolTable {
         SymbolTable {
-            entries: vec![scope],
+            tables: vec![scope],
         }
     }
 
     /// Get the most inner scope.
-    pub fn inner_scope(&self) -> &TableEntry {
-        self.entries.last().expect("at least one scope")
+    pub fn inner_entry(&self) -> &TableEntry {
+        self.tables.last().expect("at least one scope")
     }
 
     /// Mutable `Self::inner_scope`.
     pub fn inner_mut(&mut self) -> &mut TableEntry {
-        self.entries.last_mut().expect("at least one scope")
+        self.tables.last_mut().expect("at least one scope")
     }
 
     /// Enter a new scope
     pub fn enter_scope(&mut self) {
-        self.entries.push(TableEntry::new());
+        self.tables.push(TableEntry::new());
     }
 
     /// Exit a scope
     pub fn exit_scope(&mut self) {
-        assert!(self.entries.len() > 1, "can't exit out of the first scope");
+        assert!(self.tables.len() > 1, "can't exit out of the first scope");
 
-        self.entries.pop();
+        self.tables.pop();
     }
 
     /// Return the current scope level
     pub fn scope_level(&mut self) -> usize {
-        self.entries.len() - 1
+        self.tables.len() - 1
     }
 
     /// Lookup for the resolution of `name` in the inner most scope, returns
     /// `None` if `name` wasn't found.
-    pub fn lookup_current(&self, name: Symbol) -> Option<Res> {
-        self.inner_scope().map.get(&name).cloned()
+    pub fn lookup_current(&self, name: Symbol) -> Option<HirId<ResId>> {
+        self.inner_entry().get(name)
     }
 
     /// Lookup for the resolution of `name` starting from the inner most scope
     /// and goes on to the outer most scope, returns `None` if `name` wasn't
     /// found.
-    pub fn lookup(&self, name: Symbol) -> Option<Res> {
-        for entry in self.entries.iter().rev() {
-            if let Some(res) = entry.map.get(&name) {
-                return Some(res.clone());
+    pub fn lookup(&self, name: Symbol) -> Option<HirId<ResId>> {
+        for table in self.tables.iter().rev() {
+            if let Some(entry) = table.entries.get(&name) {
+                return Some(entry.res);
             }
         }
 
@@ -642,30 +744,57 @@ impl SymbolTable {
 impl fmt::Debug for SymbolTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map()
-            .entries(self.entries.iter().enumerate())
+            .entries(self.tables.iter().enumerate())
             .finish()
+    }
+}
+
+/// Symbol table entry.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    pub res: HirId<ResId>,
+    pub uses: u32,
+}
+
+impl Entry {
+    /// Create an entry with zero uses.
+    pub fn new(res: HirId<ResId>) -> Entry {
+        Entry { res, uses: 0 }
+    }
+
+    /// Increment the uses counter by one, saturates at `u32::MAX`.
+    pub fn increment_use(&mut self) {
+        self.uses = self.uses.saturating_add(1);
     }
 }
 
 /// Symbol scope.
 #[derive(Debug, Clone)]
 pub struct TableEntry {
-    map: IndexMap<Symbol, Res>,
+    entries: IndexMap<Symbol, Entry>,
 }
 
 impl TableEntry {
     /// Create a new empty table entry.
-    pub fn new() -> TableEntry {
+    fn new() -> TableEntry {
         TableEntry {
-            map: IndexMap::new(),
+            entries: IndexMap::new(),
         }
+    }
+
+    /// Get the res mapped to the sym.
+    pub fn get(&self, sym: Symbol) -> Option<HirId<ResId>> {
+        self.entries.get(&sym).map(|entry| entry.res)
     }
 }
 
-impl FromIterator<(Symbol, Res)> for TableEntry {
-    fn from_iter<T: IntoIterator<Item = (Symbol, Res)>>(iter: T) -> Self {
+impl FromIterator<(Symbol, HirId<ResId>)> for TableEntry {
+    fn from_iter<T: IntoIterator<Item = (Symbol, HirId<ResId>)>>(iter: T) -> Self {
         TableEntry {
-            map: IndexMap::from_iter(iter),
+            entries: IndexMap::from_iter(
+                iter.into_iter()
+                    .map(|(sym, res)| (sym, Entry { res, uses: 0 })),
+            ),
         }
     }
 }
@@ -674,7 +803,10 @@ impl FromIterator<(Symbol, Res)> for TableEntry {
 #[derive(Debug, Clone)]
 pub struct Candidate {
     /// the resolution, the same as the last of `seg_res`.
-    pub res: Res,
+    ///
+    /// `.0` is where to update the res and `.1` is what will be the updated
+    /// value after applying it.
+    pub res: (HirId<ResId>, Res),
     /// the namespace of this resolution
     pub ns: Namespace,
     /// the child scope of this candidate
@@ -685,20 +817,20 @@ pub struct Candidate {
 
 impl Candidate {
     /// Create a new candidate
-    pub fn new(res: Res, ns: Namespace, child: Option<Scope>) -> Candidate {
+    pub fn new(res: (HirId<ResId>, Res), ns: Namespace, child: Option<Scope>) -> Candidate {
         Candidate {
             res: res.clone(),
             ns,
             child,
-            seg_res: vec![res],
+            seg_res: vec![res.1],
         }
     }
 
     /// Push a resolution to the candidate
-    pub fn push_res(&mut self, res: Res, ns: Namespace, child: Option<Scope>) {
+    pub fn push_res(&mut self, res: (HirId<ResId>, Res), ns: Namespace, child: Option<Scope>) {
         self.res = res.clone();
         self.ns = ns;
-        self.seg_res.push(res);
+        self.seg_res.push(res.1);
         self.child = child;
     }
 }

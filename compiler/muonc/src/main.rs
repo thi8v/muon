@@ -1,7 +1,8 @@
 use std::{io::Write, process::ExitCode};
 
-use muonc::CliError;
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use clap::ColorChoice;
+use muonc::{COLOR_CHOICE, CliError, color_choice_converter};
+use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 fn main() -> ExitCode {
     match muonc::run() {
@@ -17,7 +18,9 @@ fn main() -> ExitCode {
             }
         }
         Err(e) => {
-            let mut out = StandardStream::stderr(ColorChoice::Auto);
+            let mut out = StandardStream::stderr(color_choice_converter(
+                COLOR_CHOICE.get().copied().unwrap_or(ColorChoice::Auto),
+            ));
 
             out.set_color(ColorSpec::new().set_bold(true)).unwrap();
             write!(out, "muonc: ").unwrap();

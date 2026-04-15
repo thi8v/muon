@@ -29,6 +29,8 @@ pub enum StmtKind {
     /// `expr_with_block ";"` or
     /// `expr_without_block ";"`
     Semi(Expr),
+    /// Just a semicolon.
+    Empty,
 }
 
 /// A Muon Block.
@@ -46,6 +48,7 @@ impl Parser {
         match self.token.tt {
             Kw(Keyword::Let) => self.parse_binding_stmt(),
             Pound => self.parse_directive_stmt(),
+            Semi => self.parse_empty_stmt(),
             _ => {
                 // didn't recognized a statement, must be an expression statement
                 self.parse_expr_stmt(in_block)
@@ -139,6 +142,16 @@ impl Parser {
         })
     }
 
+    /// Parses an empty statement
+    pub fn parse_empty_stmt(&mut self) -> ReResult<Stmt> {
+        let span = tri!(self.expect(ExpToken::Semi));
+
+        Ok(Stmt {
+            kind: StmtKind::Empty,
+            span,
+        })
+    }
+
     /// Parses a block.
     pub fn parse_block(&mut self) -> ReResult<Block> {
         let mut stmts: Vec<Stmt> = Vec::new();
@@ -168,7 +181,9 @@ impl Parser {
                     // ... expr }
                     //         ^ we are here so:
 
-                    debug_assert!(diag.is_some());
+                    if cfg!(debug_assertions) && !expr.kind.contains_block() {
+                        assert!(diag.is_some());
+                    }
 
                     tail = Some(expr.clone());
                     break;

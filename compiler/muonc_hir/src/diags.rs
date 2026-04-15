@@ -248,7 +248,33 @@ impl Diagnostic for NameDefinedMultipleTimes {
             )
             .with_label(
                 Label::secondary(self.old_span)
-                    .with_message(format!("defined here for the first time")),
+                    .with_message("defined here for the first time".to_string()),
             )
+    }
+}
+
+/// `E0026` -- cannot nest extern blocks
+#[derive(Debug, Clone)]
+pub struct CannotNestExternBlocks {
+    pub inner_span: Span,
+    pub outer_span: Span,
+}
+
+impl Diagnostic for CannotNestExternBlocks {
+    fn into_diag(self, dcx: &DiagCtxt) -> Diag {
+        dcx.diag(Level::Error)
+            .with_code(ErrCode::CannotNestExternBlocks)
+            .with_title("cannot nest extern blocks")
+            .with_label(
+                Label::primary(self.inner_span).with_message("this external block is nested"),
+            )
+            .with_label(
+                Label::secondary(self.outer_span).with_message(".. inside this extern block"),
+            )
+            .subdiag(Subdiag {
+                level: Level::Help,
+                message: "move the extern block outside of the outer one".to_string(),
+                span: MultiSpan::from(Label::primary(self.inner_span).with_message("this block")),
+            })
     }
 }

@@ -7,12 +7,12 @@ use std::{
     panic,
     path::PathBuf,
     process::{ExitCode, abort},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     thread,
     time::Instant,
 };
 
-use clap::{ArgAction, Parser as ArgParser, ValueEnum};
+use clap::{ArgAction, ColorChoice, Parser as ArgParser, ValueEnum};
 use muonc_hir::{lowering::LoweringCtx, resolve::Resolver};
 use termimad::MadSkin;
 use thiserror::Error;
@@ -38,6 +38,17 @@ mod build {
     include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
 }
 
+pub static COLOR_CHOICE: OnceLock<ColorChoice> = OnceLock::new();
+
+/// converts clap color choice to termcolor's
+pub fn color_choice_converter(choice: ColorChoice) -> termcolor::ColorChoice {
+    match choice {
+        ColorChoice::Auto => termcolor::ColorChoice::Auto,
+        ColorChoice::Always => termcolor::ColorChoice::Always,
+        ColorChoice::Never => termcolor::ColorChoice::Never,
+    }
+}
+
 /// Implements `FromStr` for any type that implements `ValueEnum`.
 /// The error type is `String`.
 macro_rules! from_value_enum {
@@ -56,7 +67,8 @@ macro_rules! from_value_enum {
 #[command(
     about = "Compiler for the Muon Programming Language.",
     disable_version_flag = true,
-    override_usage = "muonc [OPTIONS] <INPUT>"
+    override_usage = "muonc [OPTIONS] <INPUT>",
+    color = if cfg!(debug_assertions) { ColorChoice::Always } else { ColorChoice::Auto },
 )]
 pub struct MuonCli {
     /// Specify the name of the package being built, defaults to the input file
@@ -83,6 +95,10 @@ pub struct MuonCli {
     /// Explain an error code like `E0001` or a warning like `W0001`.
     #[arg(long)]
     explain: Option<muonc_errors::Code>,
+
+    /// Coloring.
+    #[arg(long, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
 
     /// Print version info and exit
     #[arg(short = 'V', long, action = ArgAction::SetTrue)]
@@ -172,6 +188,16 @@ pub enum CliError {
     },
 }
 
+impl CliError {
+    /// Returns `true` if the cli error is [`BuildFailed`].
+    ///
+    /// [`BuildFailed`]: CliError::BuildFailed
+    #[must_use]
+    pub fn is_build_failed(&self) -> bool {
+        matches!(self, Self::BuildFailed { .. })
+    }
+}
+
 /// Exit code used by muonc to tell that the build failed.
 pub fn exit_code_build_fail() -> ExitCode {
     ExitCode::from(0x69)
@@ -226,6 +252,10 @@ pub fn run() -> Result<(), CliError> {
 
     let args = MuonCli::try_parse()?;
 
+    COLOR_CHOICE
+        .set(args.color)
+        .expect("COLOR_CHOICE must be uninitialized at this point");
+
     let host = TargetTriple::host();
 
     if args.version {
@@ -240,6 +270,8 @@ pub fn run() -> Result<(), CliError> {
             eprintln!("host: {}", host);
             eprintln!("commit-hash: {}", build::COMMIT_HASH);
             eprintln!("commit-date: {}", build::COMMIT_DATE);
+            eprintln!("branch: {}", build::BRANCH);
+            eprintln!("build-channel: {}", build::BUILD_RUST_CHANNEL);
             eprintln!("rustc-version: {}", build::RUST_VERSION);
             eprintln!("rustc-toolchain: {}", build::RUST_CHANNEL);
         }
@@ -295,7 +327,14 @@ pub fn run() -> Result<(), CliError> {
     sess.set_total_timings();
 
     if debug_opts.timings {
-        eprint!("\n{}", sess.timings.lock().unwrap())
+        let should_print = match res {
+            Err(ref e) => e.is_build_failed(),
+            Ok(_) => true,
+        };
+
+        if should_print {
+            eprint!("\n{}", sess.timings.lock().unwrap());
+        }
     }
 
     res

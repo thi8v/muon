@@ -9,7 +9,7 @@ use muonc_span::prelude::*;
 use muonc_token::Lit;
 
 /// Kind of definition in Muon
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DefKind {
     /// Module kind of definition
     ///
@@ -29,10 +29,6 @@ pub enum DefKind {
     ///
     /// `#import ...;`
     Import,
-    /// Extern block
-    ///
-    /// `extern "C" { /* ... */ }`
-    Extern,
 }
 
 impl DefKind {
@@ -49,13 +45,12 @@ impl fmt::Display for DefKind {
             Self::Fun => write!(f, "Fun"),
             Self::Glob => write!(f, "Glob"),
             Self::Import => write!(f, "Import"),
-            Self::Extern => write!(f, "Extern"),
         }
     }
 }
 
-/// The resolution of a path or export.
-#[derive(Debug, Clone)]
+/// The resolution of a path / name.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Res {
     /// Resolved to a definition of some sort in the HIR.
     ///
@@ -100,8 +95,7 @@ impl Res {
                 DefKind::Mod => sym::module,
                 DefKind::Fun => sym::function,
                 DefKind::Glob => sym::global,
-                DefKind::Import => sym::import,
-                DefKind::Extern => sym::extern_res,
+                DefKind::Import => sym::Import,
             },
             Res::PrimTy(_) => sym::primty,
             Res::Local(_) => sym::local,
@@ -119,16 +113,16 @@ impl From<PrimTy> for Res {
 /// A resolved Path
 #[derive(Debug, Clone)]
 pub struct Path {
-    pub res: Res,
+    pub res: HirId<ResId>,
     pub segments: Vec<PathSegmentId>,
     pub span: Span,
 }
 
 impl Path {
     /// Create a new unresolved path.
-    pub fn new(segments: Vec<PathSegmentId>, span: Span) -> Path {
+    pub fn new(res: HirId<ResId>, segments: Vec<PathSegmentId>, span: Span) -> Path {
         Path {
-            res: Res::Unresolved,
+            res,
             segments,
             span,
         }
@@ -140,7 +134,7 @@ impl Path {
 pub struct PathSegment {
     pub ident: Identifier,
     pub id: PathSegmentId,
-    pub res: Res,
+    pub res: HirId<ResId>,
 }
 
 impl TryFrom<Node> for PathSegment {
@@ -190,6 +184,12 @@ entity! {
 
     /// [`NodeId`] but ensured by its type to point to a `Node::Path`.
     pub struct PathId = NodeId;
+
+    /// [`NodeId`] but ensured by its type to point to a `Node::ExternHeader`.
+    pub struct ExternHeaderId = NodeId;
+
+    /// [`NodeId`] but ensured by its type to point to a `Node::Res`.
+    pub struct ResId = NodeId;
 
     /// [`DefId`] but ensured that the Item that points to can *own* items, like
     /// Muon's modules or extern blocks.
@@ -255,6 +255,16 @@ impl NodeId {
     /// Convert this node id to a Path id.
     pub fn to_path_id(self) -> PathId {
         PathId(self)
+    }
+
+    /// Convert this node id to a ExternHeader id.
+    pub fn to_extern_header_id(self) -> ExternHeaderId {
+        ExternHeaderId(self)
+    }
+
+    /// Convert this node id to a Res id.
+    pub fn to_res_id(self) -> ResId {
+        ResId(self)
     }
 }
 
@@ -333,6 +343,8 @@ node_type_impl!(
     BindingId => BindingDef,
     LocalId => Local,
     PathId => Path,
+    ExternHeaderId => ExternHeader,
+    ResId => Res,
 );
 
 impl OwnerId {
@@ -401,6 +413,8 @@ pub enum Node {
     BindingDef(BindingDef),
     Local(Local),
     Path(Path),
+    ExternHeader(ExternHeader),
+    Res(Res),
     Reserved(ReservationKind, Span),
 }
 
@@ -443,6 +457,7 @@ impl Node {
                 ..
             })
             | Node::Path(Path { span, .. })
+            | Node::ExternHeader(ExternHeader { span, .. })
             | Node::Reserved(_, span) => *span,
             Node::Label(Label { name, .. }) => {
                 if let Some(name) = name {
@@ -451,6 +466,7 @@ impl Node {
                     panic!("this label doesn't have a span")
                 }
             }
+            Node::Res(_) => panic!("resolutions do not have spans"),
         }
     }
 
@@ -492,6 +508,26 @@ impl Package {
                 .get(hir_id.node_id.into()),
         )
         .expect("HirId points to invalid node kind")
+    }
+
+    /// Returns `true` if lhs is equal to rhs.
+    #[inline]
+    pub fn eq_node<Id>(&self, lhs: HirId<Id>, rhs: HirId<Id>) -> bool
+    where
+        Id: NodeType + PartialEq,
+        Id::NodeTy: PartialEq,
+    {
+        lhs == rhs || self.get_node(lhs) == self.get_node(rhs)
+    }
+
+    /// Not equal, see `eq_node`.
+    #[inline]
+    pub fn ne_node<Id>(&self, lhs: HirId<Id>, rhs: HirId<Id>) -> bool
+    where
+        Id: NodeType + PartialEq,
+        Id::NodeTy: PartialEq,
+    {
+        !self.eq_node(lhs, rhs)
     }
 
     /// Mutable `get_node`.
@@ -587,9 +623,7 @@ impl NodeOwner {
         match self.nodes.get(NodeId::ZERO) {
             Node::Package(Mod { items, .. })
             | Node::Item(Item {
-                kind:
-                    ItemKind::Extern(Extern { items, .. })
-                    | ItemKind::Directive(Directive::Mod(_, Mod { items, .. })),
+                kind: ItemKind::Directive(Directive::Mod(_, Mod { items, .. })),
                 ..
             }) => items,
             _ => panic!("Node isn't an item owner"),
@@ -601,9 +635,7 @@ impl NodeOwner {
         match self.nodes.get_mut(NodeId::ZERO) {
             Node::Package(Mod { items, .. })
             | Node::Item(Item {
-                kind:
-                    ItemKind::Extern(Extern { items, .. })
-                    | ItemKind::Directive(Directive::Mod(_, Mod { items, .. })),
+                kind: ItemKind::Directive(Directive::Mod(_, Mod { items, .. })),
                 ..
             }) => items,
             _ => panic!("Node isn't an item owner"),
@@ -648,25 +680,12 @@ pub struct Item {
 }
 
 impl Item {
-    /// Get the name of the item.
-    pub fn name(&self) -> Option<Symbol> {
-        match &self.kind {
-            ItemKind::Fundef(fundef) => Some(fundef.name.name),
-            ItemKind::Fundecl(fundecl) => Some(fundecl.name.name),
-            ItemKind::Globdef(globdef) => Some(globdef.name.name),
-            ItemKind::Globdecl(globdecl) => Some(globdecl.name.name),
-            ItemKind::Extern(_) => None,
-            ItemKind::Directive(directive) => directive.name(),
-        }
-    }
-
     /// Get the defkind.
     pub fn defkind(&self) -> DefKind {
         match &self.kind {
             ItemKind::Fundef(_) | ItemKind::Fundecl(_) => DefKind::Fun,
             ItemKind::Globdef(_) | ItemKind::Globdecl(_) => DefKind::Glob,
             ItemKind::Directive(directive) => directive.defkind(),
-            _ => todo!(),
         }
     }
 }
@@ -682,8 +701,6 @@ pub enum ItemKind {
     Globdef(Globdef),
     /// Global declaration item
     Globdecl(Globdecl),
-    /// Extern block item
-    Extern(Extern),
     /// Directive.
     Directive(Directive),
 }
@@ -692,13 +709,14 @@ impl ItemKind {
     /// Returns `true` if the item kind can own nodes.
     #[must_use]
     pub fn can_own(&self) -> bool {
-        matches!(self, Self::Extern(..) | Self::Directive(Directive::Mod(..)))
+        matches!(self, Self::Directive(Directive::Mod(..)))
     }
 }
 
 /// A Muon fundef in HIR
 #[derive(Debug, Clone)]
 pub struct Fundef {
+    pub abi: Abi,
     pub name: Identifier,
     pub sig: Sig,
     pub body: BlockId,
@@ -747,6 +765,7 @@ impl TryFrom<Node> for Param {
 /// A Muon function declaration in HIR
 #[derive(Debug, Clone)]
 pub struct Fundecl {
+    pub ext: Opt<ExternHeaderId>,
     pub name: Identifier,
     pub sig: Sig,
 }
@@ -763,16 +782,21 @@ pub struct Globdef {
 /// A Muon global declaration in HIR
 #[derive(Debug, Clone)]
 pub struct Globdecl {
+    pub ext: Opt<ExternHeaderId>,
     pub mutability: Mutability,
     pub name: Identifier,
     pub ty: TyId,
 }
 
-/// A Muon extern block in HIR
+/// An extern header.
 #[derive(Debug, Clone)]
-pub struct Extern {
+pub struct ExternHeader {
+    /// the abi.
     pub abi: Abi,
-    pub items: Vec<ItemId>,
+    /// the span of the header
+    pub span: Span,
+    /// the span of the block if this extern header was on an external block
+    pub block_span: Option<Span>,
 }
 
 /// Muon directive
@@ -788,14 +812,6 @@ pub enum Directive {
 }
 
 impl Directive {
-    /// Get the name of the directive
-    pub fn name(&self) -> Option<Symbol> {
-        match self {
-            Directive::Mod(ident, _) => Some(ident.name),
-            Directive::Import { .. } => None,
-        }
-    }
-
     /// Get the defkind of the directive.
     pub fn defkind(&self) -> DefKind {
         match self {

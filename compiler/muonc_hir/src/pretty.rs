@@ -110,6 +110,18 @@ impl PrettyDump<PkgDumper> for BindingId {
     }
 }
 
+impl PrettyDump<PkgDumper> for ExternHeaderId {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, _: &PkgDumper) -> io::Result<()> {
+        write!(ctx.out, "ext{}", self.index())
+    }
+}
+
+impl PrettyDump<PkgDumper> for ResId {
+    fn try_dump(&self, ctx: &mut PrettyCtxt, _: &PkgDumper) -> io::Result<()> {
+        write!(ctx.out, "res{}", self.index())
+    }
+}
+
 impl PrettyDump<PkgDumper> for ItemId {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         self.0.try_dump(ctx, extra)
@@ -183,6 +195,8 @@ impl PrettyDump<PkgDumper> for Node {
             Node::BindingDef(binddef) => binddef.try_dump(ctx, extra),
             Node::Local(local) => local.try_dump(ctx, extra),
             Node::Path(path) => path.try_dump(ctx, extra),
+            Node::ExternHeader(ext) => ext.try_dump(ctx, extra),
+            Node::Res(res) => res.try_dump(ctx, extra),
             Node::Reserved(kind, span) => {
                 write!(ctx.out, "RESERVED({kind:?})")?;
                 ctx.print_span(span)?;
@@ -211,7 +225,6 @@ impl PrettyDump<PkgDumper> for ItemKind {
             ItemKind::Fundecl(fundecl) => fundecl.try_dump(ctx, extra),
             ItemKind::Globdef(globdef) => globdef.try_dump(ctx, extra),
             ItemKind::Globdecl(globdecl) => globdecl.try_dump(ctx, extra),
-            ItemKind::Extern(extrn) => extrn.try_dump(ctx, extra),
             ItemKind::Directive(directive) => directive.try_dump(ctx, extra),
         }
     }
@@ -219,13 +232,19 @@ impl PrettyDump<PkgDumper> for ItemKind {
 
 impl PrettyDump<PkgDumper> for Fundef {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Fundef { name, sig, body } = self;
+        let Fundef {
+            abi,
+            name,
+            sig,
+            body,
+        } = self;
 
         pretty_struct! {
             ctx,
             extra,
             "Fundef",
             {
+                abi,
                 name,
                 sig,
                 body,
@@ -257,13 +276,14 @@ impl PrettyDump<PkgDumper> for Sig {
 
 impl PrettyDump<PkgDumper> for Fundecl {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Fundecl { name, sig } = self;
+        let Fundecl { ext, name, sig } = self;
 
         pretty_struct! {
             ctx,
             extra,
             "Fundecl",
             {
+                ext,
                 name,
                 sig,
             }
@@ -301,6 +321,7 @@ impl PrettyDump<PkgDumper> for Globdef {
 impl PrettyDump<PkgDumper> for Globdecl {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
         let Globdecl {
+            ext,
             mutability,
             name,
             ty,
@@ -311,6 +332,7 @@ impl PrettyDump<PkgDumper> for Globdecl {
             extra,
             "Globdecl",
             {
+                ext,
                 mutability,
                 name,
                 ty,
@@ -321,18 +343,23 @@ impl PrettyDump<PkgDumper> for Globdecl {
     }
 }
 
-impl PrettyDump<PkgDumper> for Extern {
+impl PrettyDump<PkgDumper> for ExternHeader {
     fn try_dump(&self, ctx: &mut PrettyCtxt, extra: &PkgDumper) -> io::Result<()> {
-        let Extern { abi, items } = self;
+        let ExternHeader {
+            abi,
+            span,
+            block_span,
+        } = self;
 
         pretty_struct! {
             ctx,
             extra,
-            "Extern",
+            "ExternHeader",
             {
                 abi,
-                items,
-            }
+                block_span,
+            },
+            span
         }
 
         Ok(())

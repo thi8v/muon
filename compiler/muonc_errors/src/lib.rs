@@ -65,6 +65,7 @@ codes_enum! {
         NotFoundInScope = 23,
         AmbiguousName = 24,
         NameDefinedMultipleTimes = 25,
+        CannotNestExternBlocks = 26,
     }
 }
 
@@ -176,6 +177,12 @@ impl MultiSpan {
 impl Default for MultiSpan {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl From<Label> for MultiSpan {
+    fn from(label: Label) -> Self {
+        MultiSpan { spans: vec![label] }
     }
 }
 

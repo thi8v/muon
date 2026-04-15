@@ -2,23 +2,26 @@
 
 use std::{mem, path::PathBuf, sync::Arc};
 
-use muonc_entity::{EntityMap, Opt};
+use muonc_entity::{Entity, EntityMap, Opt};
 use muonc_errors::{FeatureNotImplemented, prelude::*};
 use muonc_lexer::Lexer;
-use muonc_middle::{ast::UnOp, session::Session};
+use muonc_middle::{
+    ast::{Abi, UnOp},
+    session::Session,
+};
 use muonc_parser::{Parser, ast};
 use muonc_span::prelude::*;
 use muonc_token::{Lit, TokenStream};
 
 use crate::{
     diags::{
-        BreakWithValueUnsupported, CantContinueABlock, LabelKwOutsideLoopOrBlock,
-        ModuleFilePathErr, UseOfUndefinedLabel, WLabelShadowed,
+        BreakWithValueUnsupported, CannotNestExternBlocks, CantContinueABlock,
+        LabelKwOutsideLoopOrBlock, ModuleFilePathErr, UseOfUndefinedLabel, WLabelShadowed,
     },
     hir::{
-        self, BindingDef, BindingId, BlockId, ExprId, GenId, GenTrace, HirId, ItemId, LabelId,
-        LocalId, LocalKind, MaybeOwner, NodeId, NodeOwner, NodeType, OwnerId, ParamId, PathId,
-        PathSegmentId, StmtId, TyId,
+        self, BindingDef, BindingId, BlockId, ExprId, ExternHeaderId, GenId, GenTrace, HirId,
+        ItemId, LabelId, LocalId, LocalKind, MaybeOwner, NodeId, NodeOwner, NodeType, OwnerId,
+        ParamId, PathId, PathSegmentId, ResId, StmtId, TyId,
     },
 };
 
@@ -35,6 +38,8 @@ pub struct LoweringCtx {
     /// the parser, used for lowering of module declaration, instead of
     /// recrating one each time.
     pub parser: Parser,
+    /// current extern header block id.
+    pub(crate) cur_ext: Opt<ExternHeaderId>,
     /// diagnostic context
     pub(crate) dcx: DiagCtxt,
     /// compilation session
@@ -49,6 +54,7 @@ impl LoweringCtx {
             cursor: OwnerId::from(DefId::PACKAGE_DEF),
             label_stack: Vec::new(),
             parser: Parser::new_empty(session.clone()),
+            cur_ext: Opt::None,
             dcx: session.dcx.clone(),
             session,
         }
@@ -258,7 +264,7 @@ impl LoweringCtx {
 
     /// Make a `Node::PathSegment`.
     #[must_use]
-    pub fn mk_path_segment(&mut self, ident: Identifier, res: hir::Res) -> PathSegmentId {
+    pub fn mk_path_segment(&mut self, ident: Identifier, res: HirId<ResId>) -> PathSegmentId {
         self.mk_node_with(|node_id| {
             hir::Node::PathSegment(hir::PathSegment {
                 ident,
@@ -322,6 +328,15 @@ impl LoweringCtx {
     #[must_use]
     pub fn mk_path(&mut self, path: hir::Path) -> PathId {
         self.mk_node(hir::Node::Path(path)).to_path_id()
+    }
+
+    /// Make a `Node::Res`.
+    #[must_use]
+    pub fn mk_res(&mut self, res: hir::Res) -> HirId<ResId> {
+        HirId {
+            owner: self.cursor,
+            node_id: self.mk_node(hir::Node::Res(res)).to_res_id(),
+        }
     }
 
     /// Reserve a `Node::Expr`.
@@ -416,6 +431,22 @@ impl LoweringCtx {
     #[must_use]
     pub fn mk_binding(&mut self, binddef: BindingDef) -> BindingId {
         self.mk_node(hir::Node::BindingDef(binddef)).to_binding_id()
+    }
+
+    /// Make a `Node::ExternHeader`.
+    #[must_use]
+    pub fn mk_extern_header(
+        &mut self,
+        abi: Abi,
+        span: Span,
+        block_span: Option<Span>,
+    ) -> ExternHeaderId {
+        self.mk_node(hir::Node::ExternHeader(hir::ExternHeader {
+            abi,
+            span,
+            block_span,
+        }))
+        .to_extern_header_id()
     }
 
     /// Make a gen trace.
@@ -533,6 +564,11 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Fundef(hir::Fundef {
+                abi: fundef
+                    .ext_header
+                    .as_ref()
+                    .map(|h| h.abi)
+                    .unwrap_or_default(),
                 name: fundef.name,
                 sig,
                 body,
@@ -595,7 +631,9 @@ impl LoweringCtx {
         let mut stmts = Vec::with_capacity(block.stmts.len());
 
         for stmt in &block.stmts {
-            if let Ok(stmt) = self.lower_stmt(stmt) {
+            if let Ok(ostmt) = self.lower_stmt(stmt)
+                && let Some(stmt) = ostmt.expand()
+            {
                 stmts.push(stmt);
             }
         }
@@ -606,7 +644,11 @@ impl LoweringCtx {
     }
 
     /// Lower a statement
-    pub fn lower_stmt(&mut self, stmt: &ast::Stmt) -> ReResult<StmtId> {
+    pub fn lower_stmt(&mut self, stmt: &ast::Stmt) -> ReResult<Opt<StmtId>> {
+        if stmt.kind == ast::StmtKind::Empty {
+            return Ok(Opt::None);
+        }
+
         let stmt_id = self.reserve_stmt(stmt.span);
 
         let kind = match stmt.kind {
@@ -640,11 +682,12 @@ impl LoweringCtx {
             }
             ast::StmtKind::Expr(ref expr) => hir::StmtKind::Expr(tri!(self.lower_expr(expr))),
             ast::StmtKind::Semi(ref expr) => hir::StmtKind::Semi(tri!(self.lower_expr(expr))),
+            ast::StmtKind::Empty => unreachable!(),
         };
 
         self.pop_stmt(stmt_id, kind);
 
-        Ok(stmt_id)
+        Ok(Opt::Some(stmt_id))
     }
 
     /// Lower an expression
@@ -977,6 +1020,7 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Fundecl(hir::Fundecl {
+                ext: self.cur_ext,
                 name: fundecl.name,
                 sig,
             }),
@@ -1006,6 +1050,7 @@ impl LoweringCtx {
 
         self.mk_item(
             hir::ItemKind::Globdecl(hir::Globdecl {
+                ext: self.cur_ext,
                 mutability: globdecl.mutability,
                 name: globdecl.name,
                 ty,
@@ -1016,17 +1061,32 @@ impl LoweringCtx {
 
     /// Lower an extern block.
     pub fn lower_extern(&mut self, extrn: &ast::Extern) -> ItemId {
-        let item_id = self.mk_item(
-            hir::ItemKind::Extern(hir::Extern {
-                abi: extrn.abi,
-                items: Vec::with_capacity(extrn.items.len()),
-            }),
-            extrn.span,
-        );
+        let ext = self.mk_extern_header(extrn.header.abi, extrn.header.span, Some(extrn.span));
 
-        self.lower_item_seq(&extrn.items, OwnerId(item_id.0));
+        let cur = self.cur_ext;
+        if let Some(cur) = cur.expand() {
+            let hir::Node::ExternHeader(hir::ExternHeader {
+                block_span: Some(outer_span),
+                ..
+            }) = *self.get_node(cur.0)
+            else {
+                unreachable!();
+            };
 
-        item_id
+            self.dcx.emit(CannotNestExternBlocks {
+                inner_span: extrn.span,
+                outer_span,
+            });
+        }
+
+        self.cur_ext = Opt::Some(ext);
+
+        self.lower_item_seq(&extrn.items, self.cursor);
+
+        self.cur_ext = cur;
+
+        // NOTE: this is fine, we discard the result in every cases.
+        ItemId(DefId::RESERVED)
     }
 
     /// Lower of a directive
@@ -1150,12 +1210,14 @@ impl LoweringCtx {
         for seg in &path.segments {
             match seg {
                 ast::PathSegment::Ident(ident) => {
-                    segments.push(self.mk_path_segment(*ident, hir::Res::Unresolved))
+                    let res = self.mk_res(hir::Res::Unresolved);
+                    segments.push(self.mk_path_segment(*ident, res))
                 }
-                ast::PathSegment::Pkg(span) => segments.push(self.mk_path_segment(
-                    Identifier::new(sym::Pkg, *span),
-                    hir::Res::Def(hir::DefKind::Mod, DefId::PACKAGE_DEF),
-                )),
+                ast::PathSegment::Pkg(span) => {
+                    let res = self.mk_res(hir::Res::Def(hir::DefKind::Mod, DefId::PACKAGE_DEF));
+
+                    segments.push(self.mk_path_segment(Identifier::new(sym::Pkg, *span), res))
+                }
             }
         }
 
@@ -1163,7 +1225,9 @@ impl LoweringCtx {
         let lo = path.segments.first().map(|seg| seg.span()).unwrap();
         let hi = path.segments.last().map(|seg| seg.span()).unwrap();
 
-        self.mk_path(hir::Path::new(segments, Span::join(lo, hi)))
+        let res = self.mk_res(hir::Res::Unresolved);
+
+        self.mk_path(hir::Path::new(res, segments, Span::join(lo, hi)))
     }
 
     /// Lower an import directive

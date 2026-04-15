@@ -17,14 +17,24 @@ pub struct Mod {
     pub span: Span,
 }
 
+/// Extern header
+///
+/// `"extern" strlit`
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternHeader {
+    pub abi: Abi,
+    pub span: Span,
+}
+
 /// Function definition
 ///
 /// *NB: the first span is the span from `fun` to `)` and the last span is
 /// the span of the entire item.*
 ///
-/// `ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
+/// `ident "::" (extern_header)? "fun" "(" ( ident ":" type ),* ")" ( "->" type )? block`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fundef {
+    pub ext_header: Option<ExternHeader>,
     pub name: Identifier,
     pub sig: Sig,
     pub block: Block,
@@ -36,9 +46,10 @@ pub struct Fundef {
 /// *NB: the first span is the span from `fun` to `)` and the last span is
 /// the span of the entire item.*
 ///
-/// `ident "::" "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
+/// `ident "::" (extern_header)? "fun" "(" ( ident ":" type ),* ")" ( "->" type )? ";"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fundecl {
+    pub ext_header: Option<ExternHeader>,
     pub name: Identifier,
     pub sig: Sig,
     pub span: Span,
@@ -72,7 +83,7 @@ pub struct Globdecl {
 /// `"extern" strlit "{" item* "}"`
 #[derive(Debug, Clone, PartialEq)]
 pub struct Extern {
-    pub abi: Abi,
+    pub header: ExternHeader,
     pub items: Vec<Item>,
     pub span: Span,
 }
@@ -115,7 +126,7 @@ impl Parser {
     /// Parses a module
     pub fn parse_module(&mut self) -> ReResult<Mod> {
         let lo = self.token.span;
-        let items = tri!(self.parse_item_seq());
+        let items = tri!(self.parse_item_seq(ItemContainer::Module));
         let hi = self.token_span();
 
         Ok(Mod {
@@ -125,7 +136,7 @@ impl Parser {
     }
 
     /// Parses a sequence of items
-    pub fn parse_item_seq(&mut self) -> ReResult<Vec<Item>> {
+    pub fn parse_item_seq(&mut self, container: ItemContainer) -> ReResult<Vec<Item>> {
         let mut items = Vec::new();
 
         while !self.eat_one_of(None, [ExpToken::RCurly, ExpToken::Eof]) {
@@ -133,7 +144,7 @@ impl Parser {
                 Ok(item) => items.push(item),
                 Err(guarantee) => {
                     self.recovery = true;
-                    self.recover_item_in_container(ItemContainer::Module, guarantee);
+                    self.recover_item_in_container(container.clone(), guarantee);
                 }
             }
         }
@@ -250,6 +261,12 @@ impl Parser {
 
         tri!(self.expect(ExpToken::ColonColon));
 
+        let ext_header = if self.check_no_expect(ExpToken::KwExtern) {
+            Some(tri!(self.parse_extern_header()))
+        } else {
+            None
+        };
+
         let sig_lo = tri!(self.expect(ExpToken::KwFun));
 
         let params = tri!(self.parse_parenthesized(Parser::parse_param));
@@ -273,6 +290,7 @@ impl Parser {
             let hi = block.span;
 
             Ok(Item::Fundef(Fundef {
+                ext_header,
                 name,
                 sig,
                 block,
@@ -282,6 +300,7 @@ impl Parser {
             let hi = tri!(self.expect(ExpToken::Semi));
 
             Ok(Item::Fundecl(Fundecl {
+                ext_header,
                 name,
                 sig,
                 span: Span::join(lo, hi),
@@ -290,7 +309,12 @@ impl Parser {
             let span = Span::join(lo, sig.span);
 
             // NB: return a dumb item
-            self.expdiag_bump(Item::Fundecl(Fundecl { name, sig, span }))
+            self.expdiag_bump(Item::Fundecl(Fundecl {
+                ext_header,
+                name,
+                sig,
+                span,
+            }))
         }
     }
 
@@ -337,16 +361,11 @@ impl Parser {
         }
     }
 
-    /// Parses a extern block item.
-    pub fn parse_extern_item(&mut self, mutability: (Mutability, Option<Span>)) -> ReResult<Item> {
-        if let (Mutability::Mut, Some(mut_span)) = mutability {
-            self.dcx
-                .emit(MutQualifierNotPermitted { primary: mut_span });
-        }
-
+    /// Parses an extern header.
+    pub fn parse_extern_header(&mut self) -> ReResult<ExternHeader> {
         let lo = tri!(self.expect(ExpToken::KwExtern));
 
-        let lit_span = tri!(self.expect(ExpToken::Lit));
+        let hi = tri!(self.expect(ExpToken::Lit));
         let lit = self.as_lit();
 
         let strlit = if let Some(strlit) = lit.as_string() {
@@ -365,20 +384,36 @@ impl Parser {
             Err(()) => {
                 self.dcx.emit(InvalidAbi {
                     abi: strlit,
-                    primary: lit_span,
+                    primary: hi,
                 });
                 Abi::Muon
             }
         };
 
+        Ok(ExternHeader {
+            abi,
+            span: Span::join(lo, hi),
+        })
+    }
+
+    /// Parses a extern block item.
+    pub fn parse_extern_item(&mut self, mutability: (Mutability, Option<Span>)) -> ReResult<Item> {
+        if let (Mutability::Mut, Some(mut_span)) = mutability {
+            self.dcx
+                .emit(MutQualifierNotPermitted { primary: mut_span });
+        }
+
+        let header = tri!(self.parse_extern_header());
+        let lo = header.span;
+
         tri!(self.expect(ExpToken::LCurly));
 
-        let items = tri!(self.parse_item_seq());
+        let items = tri!(self.parse_item_seq(ItemContainer::ExternBlock));
 
         let hi = tri!(self.expect(ExpToken::RCurly));
 
         Ok(Item::Extern(Extern {
-            abi,
+            header,
             items,
             span: Span::join(lo, hi),
         }))
